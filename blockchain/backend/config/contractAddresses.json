@@ -1,7 +1,7 @@
 {
-  "KYCRegistry": "0x779DC797EEa9583b6e8bab916c88AFdbced9E4f3",
-  "MicroLoanContract": "0x2EC06d4769491135eBc748aEB84a5f3A665c7DC6",
+  "KYCRegistry": "0x9f6A4F1A3d3DC1f48074DF1276f085137365b748",
+  "MicroLoanContract": "0x09Cc1a7485075e2a86A85CE4f49Ad96552d22a2B",
   "deployer": "0x89D86438f7965d98d5589659bD95D2656C69e35b",
   "network": "sepolia",
-  "deployedAt": "2026-02-22T14:46:35.049Z"
+  "deployedAt": "2026-03-08T05:48:42.845Z"
 }
