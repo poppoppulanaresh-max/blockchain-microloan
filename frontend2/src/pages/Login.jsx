@@ -1,4 +1,4 @@
-// frontend/src/pages/Login.jsx
+﻿// frontend/src/pages/Login.jsx
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -25,7 +25,7 @@ export default function Login() {
     <div style={styles.page}>
       <div style={styles.card}>
         <div style={styles.header}>
-          <span style={{ fontSize: 40 }}>⛓</span>
+          <span style={{ fontSize: 40 }}>â›“</span>
           <h1 style={styles.title}>MicroLoan Platform</h1>
           <p style={styles.sub}>Blockchain-Based Decentralized Finance for MSMEs</p>
         </div>
@@ -46,7 +46,7 @@ export default function Login() {
               type="password" required style={styles.input}
               value={form.password}
               onChange={e => setForm(p => ({...p, password: e.target.value}))}
-              placeholder="••••••••"
+              placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
             />
           </div>
 
@@ -96,3 +96,4 @@ const styles = {
   },
   footer: { textAlign: "center", color: "#4a7090", fontSize: 13, marginTop: 20 }
 };
+

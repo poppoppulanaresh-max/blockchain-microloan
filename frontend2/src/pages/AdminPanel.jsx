@@ -1,2 +1,3 @@
-import { AdminPanel } from './AllPages';
+﻿import { AdminPanel } from './AllPages';
 export default AdminPanel;
+

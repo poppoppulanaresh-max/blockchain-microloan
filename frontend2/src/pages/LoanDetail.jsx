@@ -1,2 +1,3 @@
-import { LoanDetail } from './AllPages';
+﻿import { LoanDetail } from './AllPages';
 export default LoanDetail;
+
