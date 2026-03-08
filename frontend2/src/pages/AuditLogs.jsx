@@ -1,2 +1,2 @@
-﻿import { AuditLogs } from './AllPages';
+import { AuditLogs } from './AllPages';
 export default AuditLogs;
