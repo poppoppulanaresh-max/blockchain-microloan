@@ -54,7 +54,7 @@ async function initSchema() {
         pan_number     VARCHAR(20),
         business_type  VARCHAR(100),
         annual_turnover DECIMAL(15,2),
-        doc_hash       VARCHAR(64)  NOT NULL COMMENT 'SHA-256 hash stored on blockchain',
+        doc_hash        TEXT  NOT NULL COMMENT 'SHA-256 hash stored on blockchain',
         submitted_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         verified_at    TIMESTAMP NULL,
         FOREIGN KEY (user_id) REFERENCES users(id)
