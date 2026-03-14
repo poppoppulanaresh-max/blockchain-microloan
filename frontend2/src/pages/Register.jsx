@@ -28,7 +28,7 @@ export default function Register() {
     try {
       setLoading(true);
 
-      const res = await api.post("/api/auth/register", form);
+      await api.post("/auth/register", form);
 
       alert("Registration successful");
 
