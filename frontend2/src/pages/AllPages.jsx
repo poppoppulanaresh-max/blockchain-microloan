@@ -365,8 +365,6 @@ function StatCard({ label, value, color, sub }) {
 }
 
 function MilestoneProgress({ milestones = [] }) {
-  const released = milestones.filter((m) => m.status === "RELEASED").length;
-  const pct = milestones.length ? Math.round((released / milestones.length) * 100) : 0;
   const weights = [20, 30, 30, 20];
   const releasedPct = milestones.reduce(
     (acc, m, i) => acc + (m.status === "RELEASED" ? (weights[i] || 0) : 0),
@@ -699,7 +697,6 @@ export function KYCSubmit() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const { user } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1121,7 +1118,6 @@ export function Dashboard() {
   const [loans, setLoans] = useState([]);
   const [stats, setStats] = useState({ total: 0, active: 0, completed: 0, pending: 0 });
   const [loading, setLoading] = useState(true);
-  const navigate = useNavigate();
 
   useEffect(() => {
     const fetchLoans = async () => {
@@ -1144,15 +1140,6 @@ export function Dashboard() {
     };
     fetchLoans();
   }, []);
-
-  const statusColor = {
-    PENDING: "#ffd32a",
-    APPROVED: "#00d4ff",
-    ACTIVE: "#00ff9f",
-    COMPLETED: "#00ff9f",
-    REJECTED: "#ff4757",
-    DEFAULTED: "#ff4757",
-  };
 
   const s = styles;
 
@@ -1612,7 +1599,6 @@ export function LoanDetail() {
 export function LenderReview() {
   const [loans, setLoans] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("ALL");
   const { approveLoanOnChain, rejectLoanOnChain, depositFundsOnChain, connected } = useWeb3();
   const { user, logout } = useAuth();
 
