@@ -1,49 +1,35 @@
-﻿import React, { useState } from "react";
-import axios from "axios";
-import { getContract } from "../utils/contract";
+﻿import { useState } from "react";
+import api from "../utils/api";
 
 export default function ApplyLoan() {
 
   const [amount, setAmount] = useState("");
 
-  const handleApply = async () => {
+  const handleSubmit = async (e) => {
+    e.preventDefault();
 
     try {
-
-      const contract = await getContract();
-
-      const tx = await contract.requestLoan(amount);
-
-      await tx.wait();
-
-      await axios.post(
-        process.env.REACT_APP_BACKEND_URL + "/api/loans",
-        { amount }
-      );
-
-      alert("Loan requested successfully");
-
-    } catch (error) {
-      console.error(error);
+      await api.post("/loans/apply", { amount });
+      alert("Loan application submitted");
+    } catch {
+      alert("Failed to apply loan");
     }
-
   };
 
   return (
     <div>
       <h2>Apply Loan</h2>
 
-      <input
-        type="number"
-        placeholder="Loan Amount"
-        value={amount}
-        onChange={(e)=>setAmount(e.target.value)}
-      />
+      <form onSubmit={handleSubmit}>
+        <input
+          type="number"
+          placeholder="Loan Amount"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
 
-      <button onClick={handleApply}>
-        Apply Loan
-      </button>
-
+        <button type="submit">Apply</button>
+      </form>
     </div>
   );
 }
