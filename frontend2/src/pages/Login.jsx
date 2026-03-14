@@ -1,2 +1,2 @@
-﻿import { Login } from "./AllPages";
+import { Login } from "./AllPages";
 export default Login;

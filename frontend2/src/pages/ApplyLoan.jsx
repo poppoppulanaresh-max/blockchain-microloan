@@ -1,2 +1,2 @@
-﻿import { ApplyLoan } from "./AllPages";
+import { ApplyLoan } from "./AllPages";
 export default ApplyLoan;

@@ -1,2 +1,2 @@
-﻿import { LenderReview } from "./AllPages";
+import { LenderReview } from "./AllPages";
 export default LenderReview;

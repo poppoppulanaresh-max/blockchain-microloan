@@ -1,2 +1,2 @@
-﻿import { Register } from "./AllPages";
+import { Register } from "./AllPages";
 export default Register;
