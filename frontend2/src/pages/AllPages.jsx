@@ -704,7 +704,7 @@ export function KYCSubmit() {
     setError("");
     try {
       const api = (await import("../utils/api")).default;
-      const res = await api.post("/kyc/submit", form);
+      const res = await api.post("/api/kyc/submit", form);
       setStatus({ msg: res.data.message, txHash: res.data.txHash });
     } catch (err) {
       setError(err.response?.data?.message || "Submission failed");
@@ -899,7 +899,7 @@ export function ApplyLoan() {
       const { ethers } = await import("ethers");
       const api = (await import("../utils/api")).default;
       const amountWei = ethers.parseEther(form.amountEth).toString();
-      const res = await api.post("/loans/apply", {
+      const res = await api.post("/api/loans/apply", {
         amountWei,
         interestRate: 1200,
         tenureMonths: Number(form.tenureMonths),
@@ -1123,7 +1123,7 @@ export function Dashboard() {
     const fetchLoans = async () => {
       try {
         const api = (await import("../utils/api")).default;
-        const res = await api.get("/loans/my");
+        const res = await api.get("/api/loans/my");
         const all = res.data.loans || [];
         setLoans(all);
         setStats({
@@ -1312,7 +1312,7 @@ export function LoanDetail() {
     const fetchLoan = async () => {
       try {
         const api = (await import("../utils/api")).default;
-        const res = await api.get(`/loans/${id}`);
+        const res = await api.get(`/api/loans/${id}`);
         setLoan(res.data.loan);
       } catch (e) {
         console.error(e);
@@ -1328,7 +1328,7 @@ export function LoanDetail() {
     if (!billDesc) return;
     try {
       const api = (await import("../utils/api")).default;
-      await api.post(`/milestones/${id}/submit`, {
+      await api.post(`/api/milestones/${id}/submit`, {
         stage,
         billDescription: billDesc,
         proofData: billDesc,
@@ -1349,7 +1349,7 @@ export function LoanDetail() {
         amountWei
       );
       const api = (await import("../utils/api")).default;
-      await api.post(`/repayments/${id}/record`, {
+      await api.post(`/api/repayments/${id}/record`, {
         installmentNo: installment,
         txHash: receipt.hash,
         amountPaidWei: amountWei,
@@ -1606,7 +1606,7 @@ export function LenderReview() {
     const fetchLoans = async () => {
       try {
         const api = (await import("../utils/api")).default;
-        const res = await api.get("/loans/pending");
+        const res = await api.get("/api/loans/pending");
         setLoans(res.data.loans || []);
       } catch (e) {
         console.error(e);
@@ -1622,7 +1622,7 @@ export function LenderReview() {
     try {
       const receipt = await approveLoanOnChain(loan.loan_id_hash);
       const api = (await import("../utils/api")).default;
-      await api.post(`/loans/${loan.id}/approve`, { txHash: receipt.hash });
+      await api.post(`/api/loans/${loan.id}/approve`, { txHash: receipt.hash });
       const shouldDeposit = window.confirm(
         "Loan approved! Deposit funds now? (Releases 20% to borrower)"
       );
@@ -1642,7 +1642,7 @@ export function LenderReview() {
     try {
       await rejectLoanOnChain(loan.loan_id_hash, reason);
       const api = (await import("../utils/api")).default;
-      await api.post(`/loans/${loan.id}/reject`, { reason });
+      await api.post(`/api/loans/${loan.id}/reject`, { reason });
       alert("Loan rejected.");
       window.location.reload();
     } catch (err) {
@@ -1796,8 +1796,8 @@ export function AdminPanel() {
       try {
         const api = (await import("../utils/api")).default;
         const [dash, kyc] = await Promise.all([
-          api.get("/admin/dashboard"),
-          api.get("/kyc/pending"),
+          api.get("/api/admin/dashboard"),
+          api.get("/api/kyc/pending"),
         ]);
         setData(dash.data);
         setPending(kyc.data.pending || []);
@@ -1811,7 +1811,7 @@ export function AdminPanel() {
   const handleKYC = async (userId, status) => {
     try {
       const api = (await import("../utils/api")).default;
-      await api.post(`/kyc/verify/${userId}`, { status });
+      await api.post(`/api/kyc/verify/${userId}`, { status });
       alert(`KYC ${status}`);
       window.location.reload();
     } catch (e) {
@@ -1986,7 +1986,7 @@ export function AuditLogs() {
     const fetchLogs = async () => {
       try {
         const api = (await import("../utils/api")).default;
-        const res = await api.get("/admin/audit-logs");
+        const res = await api.get("/api/admin/audit-logs");
         setLogs(res.data.logs || []);
       } catch (e) {
         console.error(e);
