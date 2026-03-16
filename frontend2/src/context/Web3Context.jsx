@@ -1,133 +1,333 @@
 // frontend/src/context/Web3Context.jsx
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback
+} from "react";
+
 import { ethers } from "ethers";
-import MicroLoanABI    from "../abis/MicroLoanContract.json";
-import KYCRegistryABI  from "../abis/KYCRegistry.json";
+
+import MicroLoanABI from "../abis/MicroLoanContract.json";
+import KYCRegistryABI from "../abis/KYCRegistry.json";
 import contractAddresses from "../config/contractAddresses.json";
 
 const Web3Context = createContext(null);
 
 export function Web3Provider({ children }) {
-  const [provider,       setProvider]       = useState(null);
-  const [signer,         setSigner]         = useState(null);
-  const [account,        setAccount]        = useState(null);
-  const [chainId,        setChainId]        = useState(null);
-  const [loanContract,   setLoanContract]   = useState(null);
-  const [kycContract,    setKycContract]    = useState(null);
-  const [connected,      setConnected]      = useState(false);
-  const [loading,        setLoading]        = useState(false);
-  const [error,          setError]          = useState(null);
 
-  // ── Connect MetaMask ─────────────────────────────────
+  const [provider,setProvider] = useState(null);
+  const [signer,setSigner] = useState(null);
+  const [account,setAccount] = useState(null);
+  const [chainId,setChainId] = useState(null);
+
+  const [loanContract,setLoanContract] = useState(null);
+  const [kycContract,setKycContract] = useState(null);
+
+  const [connected,setConnected] = useState(false);
+  const [loading,setLoading] = useState(false);
+  const [error,setError] = useState(null);
+
+  // ─────────────────────────────────
+  // Initialize contracts
+  // ─────────────────────────────────
+
+  const initContracts = async (ethSigner) => {
+
+    const loan = new ethers.Contract(
+      contractAddresses.MicroLoanContract,
+      MicroLoanABI,
+      ethSigner
+    );
+
+    const kyc = new ethers.Contract(
+      contractAddresses.KYCRegistry,
+      KYCRegistryABI,
+      ethSigner
+    );
+
+    setLoanContract(loan);
+    setKycContract(kyc);
+
+  };
+
+
+  // ─────────────────────────────────
+  // Connect MetaMask
+  // ─────────────────────────────────
+
   const connectWallet = useCallback(async () => {
+
     if (!window.ethereum) {
       setError("MetaMask not installed. Please install MetaMask.");
       return;
     }
-    setLoading(true);
-    setError(null);
+
     try {
-      await window.ethereum.request({ method: "eth_requestAccounts" });
 
-      const ethProvider  = new ethers.BrowserProvider(window.ethereum);
-      const ethSigner    = await ethProvider.getSigner();
-      const addr         = await ethSigner.getAddress();
-      const network      = await ethProvider.getNetwork();
+      setLoading(true);
+      setError(null);
 
-      const loan = new ethers.Contract(
-        contractAddresses.MicroLoanContract, MicroLoanABI, ethSigner
-      );
-      const kyc = new ethers.Contract(
-        contractAddresses.KYCRegistry, KYCRegistryABI, ethSigner
-      );
+      await window.ethereum.request({
+        method: "eth_requestAccounts"
+      });
+
+      const ethProvider = new ethers.BrowserProvider(window.ethereum);
+      const ethSigner = await ethProvider.getSigner();
+
+      const address = await ethSigner.getAddress();
+      const network = await ethProvider.getNetwork();
 
       setProvider(ethProvider);
       setSigner(ethSigner);
-      setAccount(addr);
+      setAccount(address);
       setChainId(network.chainId.toString());
-      setLoanContract(loan);
-      setKycContract(kyc);
+
+      await initContracts(ethSigner);
+
       setConnected(true);
+
     } catch (err) {
+
+      console.error(err);
       setError(err.message);
+
     } finally {
+
       setLoading(false);
+
     }
+
   }, []);
 
-  // ── Disconnect ────────────────────────────────────────
+
+  // ─────────────────────────────────
+  // Auto reconnect wallet
+  // ─────────────────────────────────
+
+  useEffect(() => {
+
+    async function autoConnect() {
+
+      if (!window.ethereum) return;
+
+      const accounts = await window.ethereum.request({
+        method: "eth_accounts"
+      });
+
+      if (accounts.length === 0) return;
+
+      const ethProvider = new ethers.BrowserProvider(window.ethereum);
+      const ethSigner = await ethProvider.getSigner();
+
+      const address = await ethSigner.getAddress();
+      const network = await ethProvider.getNetwork();
+
+      setProvider(ethProvider);
+      setSigner(ethSigner);
+      setAccount(address);
+      setChainId(network.chainId.toString());
+
+      await initContracts(ethSigner);
+
+      setConnected(true);
+
+    }
+
+    autoConnect();
+
+  }, []);
+
+
+  // ─────────────────────────────────
+  // Listen for MetaMask changes
+  // ─────────────────────────────────
+
+  useEffect(() => {
+
+    if (!window.ethereum) return;
+
+    const handleAccountsChanged = (accounts) => {
+
+      if (accounts.length === 0) {
+        disconnect();
+      } else {
+        setAccount(accounts[0]);
+      }
+
+    };
+
+    const handleChainChanged = () => {
+      window.location.reload();
+    };
+
+    window.ethereum.on("accountsChanged", handleAccountsChanged);
+    window.ethereum.on("chainChanged", handleChainChanged);
+
+    return () => {
+      window.ethereum.removeListener("accountsChanged", handleAccountsChanged);
+      window.ethereum.removeListener("chainChanged", handleChainChanged);
+    };
+
+  }, []);
+
+
+  // ─────────────────────────────────
+  // Disconnect wallet
+  // ─────────────────────────────────
+
   const disconnect = () => {
-    setProvider(null); setSigner(null); setAccount(null);
-    setLoanContract(null); setKycContract(null); setConnected(false);
+
+    setProvider(null);
+    setSigner(null);
+    setAccount(null);
+    setChainId(null);
+
+    setLoanContract(null);
+    setKycContract(null);
+
+    setConnected(false);
+
   };
 
-  // ── Listen for account / chain changes ───────────────
-  useEffect(() => {
-    if (!window.ethereum) return;
-    const handleAccChange = (accounts) => {
-      if (accounts.length === 0) disconnect();
-      else setAccount(accounts[0]);
-    };
-    const handleChainChange = () => window.location.reload();
-    window.ethereum.on("accountsChanged", handleAccChange);
-    window.ethereum.on("chainChanged",    handleChainChange);
-    return () => {
-      window.ethereum.removeListener("accountsChanged", handleAccChange);
-      window.ethereum.removeListener("chainChanged",    handleChainChange);
-    };
-  }, []);
 
-  // ── Blockchain actions ────────────────────────────────
+  // ─────────────────────────────────
+  // Safety check
+  // ─────────────────────────────────
 
-  /** Borrower applies for loan via smart contract */
-  async function applyLoanOnChain(amountWei, interestRate, tenureMonths, collateral) {
-    const tx = await loanContract.applyForLoan(
-      amountWei, interestRate, tenureMonths, collateral
-    );
-    return tx.wait();
+  function ensureWalletConnected() {
+
+    if (!connected || !loanContract) {
+      throw new Error("MetaMask wallet not connected.");
+    }
+
   }
 
-  /** Lender approves loan on-chain */
+
+  // ─────────────────────────────────
+  // Smart Contract Functions
+  // ─────────────────────────────────
+
+  async function applyLoanOnChain(amountWei, interestRate, tenureMonths, collateral) {
+
+    ensureWalletConnected();
+
+    const tx = await loanContract.applyForLoan(
+      amountWei,
+      interestRate,
+      tenureMonths,
+      collateral
+    );
+
+    return tx.wait();
+
+  }
+
+
   async function approveLoanOnChain(loanIdHash) {
+
+    ensureWalletConnected();
+
     const tx = await loanContract.approveLoan(loanIdHash);
     return tx.wait();
+
   }
 
-  /** Lender rejects loan on-chain */
+
   async function rejectLoanOnChain(loanIdHash, reason) {
+
+    ensureWalletConnected();
+
     const tx = await loanContract.rejectLoan(loanIdHash, reason);
     return tx.wait();
+
   }
 
-  /** Lender deposits ETH into escrow + triggers milestone 1 */
+
   async function depositFundsOnChain(loanIdHash, amountWei) {
-    const tx = await loanContract.depositFunds(loanIdHash, { value: amountWei });
+
+    ensureWalletConnected();
+
+    const tx = await loanContract.depositFunds(
+      loanIdHash,
+      { value: amountWei }
+    );
+
     return tx.wait();
+
   }
 
-  /** Borrower submits milestone proof */
+
   async function submitMilestoneProof(loanIdHash, milestoneIndex, proofHash) {
-    const tx = await loanContract.submitMilestoneProof(loanIdHash, milestoneIndex, proofHash);
+
+    ensureWalletConnected();
+
+    const tx = await loanContract.submitMilestoneProof(
+      loanIdHash,
+      milestoneIndex,
+      proofHash
+    );
+
     return tx.wait();
+
   }
 
-  /** Borrower makes EMI repayment */
+
   async function makeRepaymentOnChain(loanIdHash, installment, amountWei) {
-    const tx = await loanContract.makeRepayment(loanIdHash, installment, { value: amountWei });
+
+    ensureWalletConnected();
+
+    const tx = await loanContract.makeRepayment(
+      loanIdHash,
+      installment,
+      { value: amountWei }
+    );
+
     return tx.wait();
+
   }
+
+
+  // ─────────────────────────────────
+  // Context Provider
+  // ─────────────────────────────────
 
   return (
+
     <Web3Context.Provider value={{
-      provider, signer, account, chainId,
-      loanContract, kycContract, connected, loading, error,
-      connectWallet, disconnect,
-      applyLoanOnChain, approveLoanOnChain, rejectLoanOnChain,
-      depositFundsOnChain, submitMilestoneProof, makeRepaymentOnChain
+
+      provider,
+      signer,
+      account,
+      chainId,
+
+      loanContract,
+      kycContract,
+
+      connected,
+      loading,
+      error,
+
+      connectWallet,
+      disconnect,
+
+      applyLoanOnChain,
+      approveLoanOnChain,
+      rejectLoanOnChain,
+      depositFundsOnChain,
+      submitMilestoneProof,
+      makeRepaymentOnChain
+
     }}>
+
       {children}
+
     </Web3Context.Provider>
+
   );
+
 }
 
 export const useWeb3 = () => useContext(Web3Context);
