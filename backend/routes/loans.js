@@ -5,7 +5,6 @@ const { protect, authorize } = require("../middleware/auth");
 const { setCreditScoreOnChain, getLoanStatusFromChain } = require("../config/blockchain");
 
 // ── Credit Score Engine ────────────────────────────────
-// Calculates a score 300-850 based on available data
 async function calculateCreditScore(borrowerId, loanAmount, pool) {
   const [kyc]    = await pool.execute(
     "SELECT annual_turnover FROM kyc_documents WHERE user_id=?", [borrowerId]
@@ -17,17 +16,15 @@ async function calculateCreditScore(borrowerId, loanAmount, pool) {
     FROM loans WHERE borrower_id=?
   `, [borrowerId]);
 
-  let score = 600; // Base score
+  let score = 600;
 
   const turnover = parseFloat(kyc[0]?.annual_turnover || 0);
-  const amount   = parseFloat(loanAmount) / 1e18; // Convert Wei to ETH
+  const amount   = parseFloat(loanAmount) / 1e18;
 
-  // Turnover check
-  if (turnover > 5000000)  score += 100;
+  if (turnover > 5000000)      score += 100;
   else if (turnover > 1000000) score += 50;
   else if (turnover < 100000)  score -= 100;
 
-  // Repayment history
   const { total, completed, defaulted } = history[0];
   if (total > 0) {
     const repayRate = completed / total;
@@ -35,7 +32,6 @@ async function calculateCreditScore(borrowerId, loanAmount, pool) {
     score -= defaulted * 100;
   }
 
-  // Loan-to-turnover ratio
   if (turnover > 0) {
     const ratio = amount / (turnover / 1e18);
     if (ratio > 0.5) score -= 80;
@@ -58,22 +54,17 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
     }
 
     const pool = getPool();
-
-    // Calculate credit score
     const creditScore = await calculateCreditScore(req.user.id, amountWei, pool);
 
-    // Generate loan ID (matches blockchain derivation)
     const { Web3 } = require("web3");
     const web3 = new Web3();
     const loanIdHash = web3.utils.soliditySha3(
       req.user.wallet_address, Date.now(), amountWei
     );
 
-    // Determine initial status based on score
     const initialStatus = creditScore < 500 ? "REJECTED" : "PENDING";
     const rejectReason  = creditScore < 500 ? "Credit score below minimum threshold (500)" : null;
 
-    // Save to MySQL
     const [result] = await pool.execute(`
       INSERT INTO loans
         (loan_id_hash, borrower_id, amount_wei, interest_rate,
@@ -84,7 +75,6 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
 
     const loanDbId = result.insertId;
 
-    // Sync credit score to blockchain
     try {
       const tx = await setCreditScoreOnChain(loanIdHash, creditScore);
       await pool.execute(
@@ -95,7 +85,6 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
       console.warn("Blockchain sync failed (non-fatal):", chainErr.message);
     }
 
-    // Initialize milestones if not auto-rejected
     if (initialStatus !== "REJECTED") {
       const milestones = [
         { stage: 1, pct: 20 },
@@ -111,7 +100,6 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
       }
     }
 
-    // Audit log
     await pool.execute(`
       INSERT INTO audit_logs (loan_id, actor_wallet, action, details)
       VALUES (?, ?, 'LOAN_APPLIED', ?)
@@ -135,7 +123,6 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
 });
 
 // ── GET /api/loans/my ─────────────────────────────────
-// Borrower's own loans
 router.get("/my", protect, async (req, res) => {
   try {
     const pool = getPool();
@@ -156,17 +143,26 @@ router.get("/my", protect, async (req, res) => {
 });
 
 // ── GET /api/loans/pending ─────────────────────────────
-// Lender sees all PENDING loans to review
-router.get("/pending", protect, authorize("lender","admin"), async (req, res) => {
+// FIX 1: Added "auditor" to authorize() so auditors can also see pending loans
+// FIX 2: Added pan_number, aadhaar_number, business_type to the KYC join
+router.get("/pending", protect, authorize("lender", "auditor", "government", "admin"), async (req, res) => {
   try {
     const pool = getPool();
     const [loans] = await pool.execute(`
-      SELECT l.*, u.name AS borrower_name, u.email AS borrower_email,
-             u.wallet_address AS borrower_wallet,
-             k.business_name, k.annual_turnover, k.gst_number
+      SELECT
+        l.*,
+        u.name            AS borrower_name,
+        u.email           AS borrower_email,
+        u.wallet_address  AS borrower_wallet,
+        k.business_name,
+        k.annual_turnover,
+        k.gst_number,
+        k.pan_number,
+        k.aadhaar_number,
+        k.business_type
       FROM loans l
-      JOIN users u ON u.id = l.borrower_id
-      JOIN kyc_documents k ON k.user_id = l.borrower_id
+      JOIN users u        ON u.id        = l.borrower_id
+      LEFT JOIN kyc_documents k ON k.user_id = l.borrower_id
       WHERE l.status = 'PENDING'
       ORDER BY l.applied_at DESC
     `);
@@ -176,9 +172,48 @@ router.get("/pending", protect, authorize("lender","admin"), async (req, res) =>
   }
 });
 
+// ── GET /api/loans/my-approved ────────────────────────
+// FIX 3: This route was missing entirely — lender's "My Investments" tab was always empty
+router.get("/my-approved", protect, authorize("lender"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const [loans] = await pool.execute(`
+      SELECT
+        l.*,
+        u.name            AS borrower_name,
+        u.email           AS borrower_email,
+        u.wallet_address  AS borrower_wallet,
+        k.business_name,
+        k.annual_turnover,
+        k.gst_number,
+        k.pan_number,
+        k.aadhaar_number,
+        k.business_type
+      FROM loans l
+      JOIN users u              ON u.id        = l.borrower_id
+      LEFT JOIN kyc_documents k ON k.user_id   = l.borrower_id
+      WHERE l.lender_id = ?
+        AND l.status IN ('APPROVED', 'ACTIVE', 'COMPLETED', 'DEFAULTED')
+      ORDER BY l.approved_at DESC
+    `, [req.user.id]);
+
+    // Attach milestones to each loan
+    for (const loan of loans) {
+      const [milestones] = await pool.execute(
+        "SELECT * FROM milestones WHERE loan_id = ? ORDER BY stage",
+        [loan.id]
+      );
+      loan.milestones = milestones;
+    }
+
+    res.json({ success: true, loans });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ── GET /api/loans/all ─────────────────────────────────
-// Admin / Government / Auditor sees all loans
-router.get("/all", protect, authorize("admin","government","auditor"), async (req, res) => {
+router.get("/all", protect, authorize("admin", "government", "auditor"), async (req, res) => {
   try {
     const pool = getPool();
     const [loans] = await pool.execute(`
@@ -214,11 +249,9 @@ router.get("/:id", protect, async (req, res) => {
 
     const loan = loans[0];
 
-    // Fetch milestones
     const [milestones] = await pool.execute(
       "SELECT * FROM milestones WHERE loan_id=? ORDER BY stage", [loan.id]
     );
-    // Fetch repayment schedule
     const [repayments] = await pool.execute(
       "SELECT * FROM repayments WHERE loan_id=? ORDER BY installment_no", [loan.id]
     );
@@ -230,7 +263,6 @@ router.get("/:id", protect, async (req, res) => {
 });
 
 // ── POST /api/loans/:id/approve ───────────────────────
-// Lender approves a loan (off-chain first, then they sign on-chain via frontend)
 router.post("/:id/approve", protect, authorize("lender"), async (req, res) => {
   try {
     const pool = getPool();
@@ -242,7 +274,7 @@ router.post("/:id/approve", protect, authorize("lender"), async (req, res) => {
       return res.status(400).json({ success: false, message: "Loan is not pending" });
     }
 
-    const { txHash } = req.body; // txHash from frontend MetaMask transaction
+    const { txHash } = req.body;
 
     await pool.execute(`
       UPDATE loans SET status='APPROVED', lender_id=?, approved_at=NOW(), tx_hash_approved=?
@@ -261,7 +293,7 @@ router.post("/:id/approve", protect, authorize("lender"), async (req, res) => {
 });
 
 // ── POST /api/loans/:id/reject ────────────────────────
-router.post("/:id/reject", protect, authorize("lender","admin"), async (req, res) => {
+router.post("/:id/reject", protect, authorize("lender", "admin"), async (req, res) => {
   try {
     const { reason, txHash } = req.body;
     const pool = getPool();

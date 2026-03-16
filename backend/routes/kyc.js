@@ -20,7 +20,6 @@ router.post("/submit", protect, async (req, res) => {
       });
     }
 
-    // Create a deterministic hash of KYC data (stored on blockchain)
     const kycPayload = JSON.stringify({
       userId: req.user.id,
       businessName, gstNumber, aadhaarNumber, panNumber,
@@ -31,30 +30,30 @@ router.post("/submit", protect, async (req, res) => {
 
     const pool = getPool();
 
-    // Save sensitive data OFF-CHAIN in MySQL
     const [result] = await pool.execute(`
       INSERT INTO kyc_documents
         (user_id, business_name, gst_number, aadhaar_number, pan_number,
          business_type, annual_turnover, doc_hash)
       VALUES (?,?,?,?,?,?,?,?)
       ON DUPLICATE KEY UPDATE
-        business_name=VALUES(business_name),
-        gst_number=VALUES(gst_number),
-        doc_hash=VALUES(doc_hash)
+        business_name    = VALUES(business_name),
+        gst_number       = VALUES(gst_number),
+        aadhaar_number   = VALUES(aadhaar_number),
+        pan_number       = VALUES(pan_number),
+        business_type    = VALUES(business_type),
+        annual_turnover  = VALUES(annual_turnover),
+        doc_hash         = VALUES(doc_hash)
     `, [
       req.user.id, businessName, gstNumber, aadhaarNumber,
       panNumber, businessType, annualTurnover, dataHash
     ]);
 
-    // Store ONLY the hash ON-CHAIN (privacy preserved)
     const tx = await storeKYCOnChain(req.user.wallet_address, dataHash, req.user.role);
 
-    // Update user kyc_status to pending
     await pool.execute(
       "UPDATE users SET kyc_status='pending' WHERE id=?", [req.user.id]
     );
 
-    // Audit log
     await pool.execute(`
       INSERT INTO audit_logs (loan_id, actor_wallet, action, details, tx_hash)
       VALUES (NULL, ?, 'KYC_SUBMITTED', ?, ?)
@@ -86,16 +85,30 @@ router.get("/status", protect, async (req, res) => {
 });
 
 // ── GET /api/kyc/pending ───────────────────────────────
-// Admin sees all pending KYC requests
-router.get("/pending", protect, authorize("admin"), async (req, res) => {
+// FIX 1: Added "auditor" and "government" to authorize()
+// FIX 2: Added pan_number, aadhaar_number, business_type, annual_turnover to SELECT
+router.get("/pending", protect, authorize("admin", "auditor", "government"), async (req, res) => {
   try {
     const pool = getPool();
     const [rows] = await pool.execute(`
-      SELECT u.id, u.name, u.email, u.wallet_address, u.role,
-             k.business_name, k.gst_number, k.doc_hash, k.submitted_at
+      SELECT
+        u.id,
+        u.name,
+        u.email,
+        u.wallet_address,
+        u.role,
+        k.business_name,
+        k.gst_number,
+        k.aadhaar_number,
+        k.pan_number,
+        k.business_type,
+        k.annual_turnover,
+        k.doc_hash,
+        k.submitted_at
       FROM users u
       JOIN kyc_documents k ON k.user_id = u.id
       WHERE u.kyc_status = 'pending'
+      ORDER BY k.submitted_at DESC
     `);
     res.json({ success: true, pending: rows });
   } catch (err) {
@@ -104,8 +117,8 @@ router.get("/pending", protect, authorize("admin"), async (req, res) => {
 });
 
 // ── POST /api/kyc/verify/:userId ──────────────────────
-// Admin approves or rejects KYC
-router.post("/verify/:userId", protect, authorize("admin"), async (req, res) => {
+// FIX 3: Added "auditor" to authorize() so auditors can approve/reject KYC
+router.post("/verify/:userId", protect, authorize("admin", "auditor"), async (req, res) => {
   try {
     const { status } = req.body;  // "verified" or "rejected"
     const { userId } = req.params;
@@ -124,10 +137,8 @@ router.post("/verify/:userId", protect, authorize("admin"), async (req, res) => 
 
     const wallet = users[0].wallet_address;
 
-    // Update blockchain
     const tx = await verifyKYCOnChain(wallet, status === "verified");
 
-    // Update MySQL
     await pool.execute(
       "UPDATE users SET kyc_status=? WHERE id=?",
       [status, userId]
@@ -136,7 +147,6 @@ router.post("/verify/:userId", protect, authorize("admin"), async (req, res) => 
       "UPDATE kyc_documents SET verified_at=NOW() WHERE user_id=?", [userId]
     );
 
-    // Audit log
     await pool.execute(`
       INSERT INTO audit_logs (actor_wallet, action, details, tx_hash)
       VALUES (?, 'KYC_VERIFIED', ?, ?)
