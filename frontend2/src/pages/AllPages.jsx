@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useWeb3 } from "../context/Web3Context";
@@ -379,7 +379,7 @@ export function KYCSubmit() {
   const [form, setForm] = useState({ businessName: "", gstNumber: "", aadhaarNumber: "", panNumber: "", businessType: "", annualTurnover: "" });
   const [submitted, setSubmitted] = useState(null);
   const [kycStatus, setKycStatus] = useState(null);
-  const [, setKycDoc] = useState(null); // setter used to track doc; value reserved for future display
+  const kycDocRef = useRef(null);
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
@@ -396,15 +396,15 @@ export function KYCSubmit() {
 
         if (st === "verified") {
           setKycStatus("verified");
-          setKycDoc(res.data.document);
+          kycDocRef.current = res.data.document;
           setStep(3);
         } else if (st === "pending" && hasDoc) {
           setKycStatus("pending");
-          setKycDoc(res.data.document);
+          kycDocRef.current = res.data.document;
           setStep(2);
         } else if (st === "rejected" && hasDoc) {
           setKycStatus("rejected");
-          setKycDoc(res.data.document);
+          kycDocRef.current = res.data.document;
           setStep(1);
         } else {
           setKycStatus(null);
@@ -947,6 +947,9 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
   );
 }
 
+// Ensures hash has the 0x prefix required by bytes32 Web3 validation
+const toBytes32 = (hash) => (hash && !hash.startsWith("0x") ? `0x${hash}` : hash);
+
 function LenderLoanCard({ loan }) {
   const { approveLoanOnChain, rejectLoanOnChain, depositFundsOnChain, connected } = useWeb3();
   const s = styles;
@@ -955,11 +958,11 @@ function LenderLoanCard({ loan }) {
   const handleApprove = async () => {
     if (!connected) return alert("Connect MetaMask first");
     try {
-      const receipt = await approveLoanOnChain(loan.loan_id_hash);
+      const receipt = await approveLoanOnChain(toBytes32(loan.loan_id_hash));
       const api = (await import("../utils/api")).default;
       await api.post(`/api/loans/${loan.id}/approve`, { txHash: receipt.hash });
       const shouldDeposit = window.confirm("Loan approved! Deposit funds now? (Releases 20% to borrower)");
-      if (shouldDeposit) await depositFundsOnChain(loan.loan_id_hash, loan.amount_wei);
+      if (shouldDeposit) await depositFundsOnChain(toBytes32(loan.loan_id_hash), loan.amount_wei);
       alert("✅ Done!");
       window.location.reload();
     } catch (err) { alert(err.message); }
@@ -969,7 +972,7 @@ function LenderLoanCard({ loan }) {
     const reason = prompt("Reason for rejection:");
     if (!reason) return;
     try {
-      await rejectLoanOnChain(loan.loan_id_hash, reason);
+      await rejectLoanOnChain(toBytes32(loan.loan_id_hash), reason);
       const api = (await import("../utils/api")).default;
       await api.post(`/api/loans/${loan.id}/reject`, { reason });
       alert("Loan rejected.");
@@ -1344,7 +1347,7 @@ export function LoanDetail() {
   const handleRepay = async (installment, amountWei) => {
     if (!connected) return alert("Connect MetaMask first");
     try {
-      const receipt = await makeRepaymentOnChain(loan.loan_id_hash, installment, amountWei);
+      const receipt = await makeRepaymentOnChain(toBytes32(loan.loan_id_hash), installment, amountWei);
       const api = (await import("../utils/api")).default;
       await api.post(`/api/repayments/${id}/record`, { installmentNo: installment, txHash: receipt.hash, amountPaidWei: amountWei });
       alert("✅ Repayment successful!");
