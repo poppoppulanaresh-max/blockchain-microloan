@@ -599,7 +599,7 @@ export function Dashboard() {
 function BorrowerDashboard({ user, logout, account, connectWallet, connected }) {
   const [loans, setLoans] = useState([]);
   const [stats, setStats] = useState({ total: 0, active: 0, completed: 0, pending: 0 });
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const s = styles;
 
   useEffect(() => {
@@ -615,7 +615,7 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
           completed: all.filter((l) => l.status === "COMPLETED").length,
           pending: all.filter((l) => l.status === "PENDING").length,
         });
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
     fetchLoans();
   }, []);
@@ -742,7 +742,7 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
   const [pendingLoans, setPendingLoans] = useState([]);
   const [myApprovedLoans, setMyApprovedLoans] = useState([]);
   const [stats, setStats] = useState({ pending: 0, approved: 0, active: 0, totalInvested: 0 });
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const s = styles;
 
   useEffect(() => {
@@ -763,7 +763,7 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
           active: approved.filter(l => l.status === "ACTIVE").length,
           completed: approved.filter(l => l.status === "COMPLETED").length,
         });
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
     fetchData();
   }, []);
@@ -922,7 +922,7 @@ function AuditorDashboard({ user, logout }) {
   const [pendingKYC, setPendingKYC] = useState([]);
   const [recentLoans, setRecentLoans] = useState([]);
   const [stats, setStats] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const s = styles;
 
   useEffect(() => {
@@ -936,7 +936,7 @@ function AuditorDashboard({ user, logout }) {
         setPendingKYC(kycRes.data.pending || []);
         setStats(dashRes.data.stats || {});
         setRecentLoans(dashRes.data.recentLoans || []);
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
     fetchData();
   }, []);
@@ -1045,7 +1045,7 @@ function GovernmentDashboard({ user, logout }) {
   const [allLoans, setAllLoans] = useState([]);
   const [logs, setLogs] = useState([]);
   const [activeTab, setActiveTab] = useState("overview");
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const s = styles;
 
   useEffect(() => {
@@ -1059,7 +1059,7 @@ function GovernmentDashboard({ user, logout }) {
         setStats(dashRes.data.stats || {});
         setAllLoans(dashRes.data.recentLoans || []);
         setLogs(logsRes.data.logs || []);
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
     fetchData();
   }, []);
@@ -1226,7 +1226,7 @@ function GovernmentDashboard({ user, logout }) {
 export function LoanDetail() {
   const { id } = useParams();
   const [loan, setLoan] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const { makeRepaymentOnChain, connected } = useWeb3();
   const { user } = useAuth();
 
@@ -1236,7 +1236,7 @@ export function LoanDetail() {
         const api = (await import("../utils/api")).default;
         const res = await api.get(`/api/loans/${id}`);
         setLoan(res.data.loan);
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
     fetchLoan();
   }, [id]);
@@ -1266,7 +1266,7 @@ export function LoanDetail() {
   const s = styles;
   const MILESTONE_LABELS = ["Stage 1 (20%) — Auto on Approval", "Stage 2 (30%) — Bill 1 Submission", "Stage 3 (30%) — Bill 2 Submission", "Stage 4 (20%) — Final Proof"];
 
-  if (loading) return <div style={s.page}><p style={{ color: "#4a7090", padding: 40, fontFamily: "monospace" }}>Loading blockchain data...</p></div>;
+  if (isLoading) return <div style={s.page}><p style={{ color: "#4a7090", padding: 40, fontFamily: "monospace" }}>Loading blockchain data...</p></div>;
   if (!loan) return <div style={s.page}><p style={{ color: "#ff4757", padding: 40 }}>Loan not found.</p></div>;
 
   return (
@@ -1369,7 +1369,7 @@ export function LenderReview() {
 
 function LenderPendingList() {
   const [loans, setLoans] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const fetchLoans = async () => {
@@ -1377,12 +1377,12 @@ function LenderPendingList() {
         const api = (await import("../utils/api")).default;
         const res = await api.get("/api/loans/pending");
         setLoans(res.data.loans || []);
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
     fetchLoans();
   }, []);
 
-  if (loading) return <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading...</p>;
+  if (isLoading) return <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading...</p>;
   if (loans.length === 0) return <div style={styles.empty}><p>No pending loan requests.</p></div>;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -1406,7 +1406,7 @@ export function AdminPanel() {
 ═══════════════════════════════════════════════════════════════════ */
 export function AuditLogs() {
   const [logs, setLogs] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
   const { user, logout } = useAuth();
 
@@ -1416,7 +1416,7 @@ export function AuditLogs() {
         const api = (await import("../utils/api")).default;
         const res = await api.get("/api/admin/audit-logs");
         setLogs(res.data.logs || []);
-      } catch (e) { console.error(e); } finally { setLoading(false); }
+      } catch (e) { console.error(e); } finally { setIsLoading(false); }
     };
     fetchLogs();
   }, []);
