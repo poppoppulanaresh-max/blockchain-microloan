@@ -68,6 +68,9 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
 
     const creditScore = await calculateCreditScore(req.user.id, amountWei, pool);
 
+    // Relaxed threshold for demo/showcase flows
+    const MIN_CREDIT_SCORE = Number(process.env.MIN_CREDIT_SCORE || 400);
+
     const { Web3 } = require("web3");
     const web3 = new Web3();
     // Use typed args so soliditySha3 never produces a bare hex — always 0x-prefixed
@@ -77,8 +80,11 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
       { type: "uint256", value: String(amountWei) }
     );
 
-    const initialStatus = creditScore < 500 ? "REJECTED" : "PENDING";
-    const rejectReason = creditScore < 500 ? "Credit score below minimum threshold (500)" : null;
+    const initialStatus = creditScore < MIN_CREDIT_SCORE ? "REJECTED" : "PENDING";
+    const rejectReason =
+      creditScore < MIN_CREDIT_SCORE
+        ? `Credit score below minimum threshold (${MIN_CREDIT_SCORE})`
+        : null;
 
     const [result] = await pool.execute(
       `INSERT INTO loans
