@@ -69,42 +69,45 @@ router.post("/submit", protect, async (req, res) => {
 
     // Save sensitive data OFF-CHAIN in MySQL
     // FIX 3 (from commit): ON DUPLICATE KEY UPDATE now covers all 7 fields
-    const [result] = await pool.execute(
+    // DELETE existing doc first to avoid duplicate key issues if no UNIQUE constraint
+    await pool.execute("DELETE FROM kyc_documents WHERE user_id=?", [req.user.id]);
+
+    await pool.execute(
       `INSERT INTO kyc_documents
         (user_id, business_name, gst_number, aadhaar_number, pan_number,
-         business_type, annual_turnover, doc_hash)
-       VALUES (?,?,?,?,?,?,?,?)
-       ON DUPLICATE KEY UPDATE
-         business_name    = VALUES(business_name),
-         gst_number       = VALUES(gst_number),
-         aadhaar_number   = VALUES(aadhaar_number),
-         pan_number       = VALUES(pan_number),
-         business_type    = VALUES(business_type),
-         annual_turnover  = VALUES(annual_turnover),
-         doc_hash         = VALUES(doc_hash)`,
+         business_type, annual_turnover, doc_hash, submitted_at)
+       VALUES (?,?,?,?,?,?,?,?, NOW())`,
       [req.user.id, businessName, gstNumber, cleanAadhaar, panNumber, businessType, annualTurnover, dataHash]
     );
 
-    // Store ONLY the hash ON-CHAIN (privacy preserved)
-    const tx = await storeKYCOnChain(req.user.wallet_address, dataHash, req.user.role);
-
-    // Update user kyc_status to pending
+    // Update user kyc_status to pending FIRST (don't block on chain)
     await pool.execute(
       "UPDATE users SET kyc_status='pending' WHERE id=?",
       [req.user.id]
     );
 
+    // Store ONLY the hash ON-CHAIN (non-fatal — DB is source of truth)
+    // Ensure dataHash is 0x-prefixed — Web3 bytes32 validation requires it
+    const dataHashHex = dataHash.startsWith("0x") ? dataHash : `0x${dataHash}`;
+    let txHash = null;
+    try {
+      const tx = await storeKYCOnChain(req.user.wallet_address, dataHashHex, req.user.role);
+      txHash = tx?.hash || null;
+    } catch (chainErr) {
+      console.warn("storeKYCOnChain failed (non-fatal):", chainErr.message);
+    }
+
     // Audit log
     await pool.execute(
       `INSERT INTO audit_logs (loan_id, actor_wallet, action, details, tx_hash)
        VALUES (NULL, ?, 'KYC_SUBMITTED', ?, ?)`,
-      [req.user.wallet_address, JSON.stringify({ businessName, gstNumber }), tx?.hash || null]
+      [req.user.wallet_address, JSON.stringify({ businessName, gstNumber }), txHash]
     );
 
     res.json({
       success: true,
       message: "KYC submitted successfully. Awaiting verification.",
-      txHash: tx?.hash,
+      txHash,
       dataHash,
     });
   } catch (err) {
@@ -150,6 +153,12 @@ router.get("/pending", protect, authorize("admin", "auditor", "government"), asy
     const limit = Math.min(50, parseInt(req.query.limit) || 20);
     const offset = (page - 1) * limit;
 
+    // Backfill submitted_at for any existing rows that were inserted before this fix
+    await pool.execute(
+      "UPDATE kyc_documents SET submitted_at = NOW() WHERE submitted_at IS NULL"
+    );
+
+    // LEFT JOIN so users with pending status but missing kyc_doc row still appear
     const [rows] = await pool.execute(
       `SELECT
          u.id,
@@ -166,9 +175,9 @@ router.get("/pending", protect, authorize("admin", "auditor", "government"), asy
          k.doc_hash,
          k.submitted_at
        FROM users u
-       JOIN kyc_documents k ON k.user_id = u.id
+       LEFT JOIN kyc_documents k ON k.user_id = u.id
        WHERE u.kyc_status = 'pending'
-       ORDER BY k.submitted_at DESC
+       ORDER BY COALESCE(k.submitted_at, u.created_at) DESC
        LIMIT ? OFFSET ?`,
       [limit, offset]
     );
@@ -208,10 +217,7 @@ router.post("/verify/:userId", protect, authorize("admin", "auditor"), async (re
 
     const wallet = users[0].wallet_address;
 
-    // Update blockchain
-    const tx = await verifyKYCOnChain(wallet, status === "verified");
-
-    // Update MySQL
+    // Update MySQL first — don't let a blockchain hiccup block the admin action
     await pool.execute(
       "UPDATE users SET kyc_status=? WHERE id=?",
       [status, userId]
@@ -221,14 +227,23 @@ router.post("/verify/:userId", protect, authorize("admin", "auditor"), async (re
       [userId]
     );
 
+    // Update blockchain (non-fatal if it fails)
+    let txHash = null;
+    try {
+      const tx = await verifyKYCOnChain(wallet, status === "verified");
+      txHash = tx?.hash || null;
+    } catch (chainErr) {
+      console.warn("verifyKYCOnChain failed (non-fatal):", chainErr.message);
+    }
+
     // Audit log
     await pool.execute(
       `INSERT INTO audit_logs (actor_wallet, action, details, tx_hash)
        VALUES (?, 'KYC_VERIFIED', ?, ?)`,
-      [req.user.wallet_address, JSON.stringify({ userId, status }), tx?.hash || null]
+      [req.user.wallet_address, JSON.stringify({ userId, status }), txHash]
     );
 
-    res.json({ success: true, message: `KYC ${status} successfully`, txHash: tx?.hash });
+    res.json({ success: true, message: `KYC ${status} successfully`, txHash });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

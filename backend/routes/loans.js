@@ -47,16 +47,19 @@ async function calculateCreditScore(borrowerId, loanAmount, pool) {
 // ── POST /api/loans/apply ─────────────────────────────────
 router.post("/apply", protect, authorize("borrower"), async (req, res) => {
   try {
-    const { amountWei, interestRate, durationDays, purpose } = req.body;
-    if (!amountWei || !interestRate || !durationDays) {
-      return res.status(400).json({ success: false, message: "amountWei, interestRate and durationDays are required" });
+    // Accept tenureMonths (frontend) or durationDays (legacy)
+    const { amountWei, interestRate, tenureMonths, durationDays, collateral, purpose } = req.body;
+    const tenure = tenureMonths || Math.round((durationDays || 0) / 30) || 12;
+
+    if (!amountWei || !interestRate) {
+      return res.status(400).json({ success: false, message: "amountWei and interestRate are required" });
     }
 
     const pool = getPool();
 
     // Borrower must have verified KYC before applying
     const [userRows] = await pool.execute(
-      "SELECT kyc_status FROM users WHERE id=?",
+      "SELECT kyc_status, wallet_address FROM users WHERE id=?",
       [req.user.id]
     );
     if (!userRows.length || userRows[0].kyc_status !== "verified") {
@@ -67,8 +70,11 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
 
     const { Web3 } = require("web3");
     const web3 = new Web3();
+    // Use typed args so soliditySha3 never produces a bare hex — always 0x-prefixed
     const loanIdHash = web3.utils.soliditySha3(
-      req.user.wallet_address, Date.now(), amountWei
+      { type: "address", value: userRows[0].wallet_address },
+      { type: "uint256", value: String(Date.now()) },
+      { type: "uint256", value: String(amountWei) }
     );
 
     const initialStatus = creditScore < 500 ? "REJECTED" : "PENDING";
@@ -77,10 +83,10 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
     const [result] = await pool.execute(
       `INSERT INTO loans
          (loan_id_hash, borrower_id, amount_wei, interest_rate,
-          duration_days, purpose, credit_score, status, reject_reason)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+          tenure_months, collateral, purpose, credit_score, status, reject_reason)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
       [loanIdHash, req.user.id, amountWei, interestRate,
-       durationDays, purpose || null, creditScore, initialStatus, rejectReason]
+       tenure, collateral || null, purpose || null, creditScore, initialStatus, rejectReason]
     );
 
     const loanDbId = result.insertId;
@@ -96,12 +102,12 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
     }
 
     if (initialStatus !== "REJECTED") {
+      // 4 milestones matching frontend weights: 20% / 30% / 30% / 20%
       const milestones = [
         { stage: 1, pct: 20 },
-        { stage: 2, pct: 40 },
-        { stage: 3, pct: 60 },
-        { stage: 4, pct: 80 },
-        { stage: 5, pct: 100 },
+        { stage: 2, pct: 30 },
+        { stage: 3, pct: 30 },
+        { stage: 4, pct: 20 },
       ];
       for (const m of milestones) {
         await pool.execute(
@@ -137,7 +143,9 @@ router.get("/my", protect, async (req, res) => {
   try {
     const pool = getPool();
     const [loans] = await pool.execute(
-      `SELECT l.*, m.stage, m.pct, m.status AS milestone_status, m.tx_hash AS milestone_tx
+      `SELECT l.*,
+              COALESCE(l.tenure_months, 0) AS tenure_months,
+              m.stage, m.pct, m.status AS milestone_status, m.tx_hash AS milestone_tx
        FROM loans l
        LEFT JOIN milestones m ON m.loan_id = l.id
        WHERE l.borrower_id = ?
