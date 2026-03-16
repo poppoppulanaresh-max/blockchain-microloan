@@ -379,7 +379,7 @@ export function KYCSubmit() {
   const [form, setForm] = useState({ businessName: "", gstNumber: "", aadhaarNumber: "", panNumber: "", businessType: "", annualTurnover: "" });
   const [submitted, setSubmitted] = useState(null);
   const [kycStatus, setKycStatus] = useState(null);
-  const [kycDoc, setKycDoc] = useState(null); // FIX: was missing, caused no-undef on lines 401/405/409
+  const [, setKycDoc] = useState(null); // setter used to track doc; value reserved for future display
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
