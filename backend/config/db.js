@@ -86,6 +86,19 @@ async function initSchema() {
       )
     `);
 
+    // Backward‑compatible migration: add "purpose" column if missing
+    try {
+      await conn.execute(`
+        ALTER TABLE loans
+        ADD COLUMN purpose VARCHAR(255) NULL AFTER collateral
+      `);
+    } catch (e) {
+      // Ignore "duplicate column" error when purpose already exists
+      if (e && e.code !== "ER_DUP_FIELDNAME") {
+        throw e;
+      }
+    }
+
     // ── Milestones ─────────────────────────────────
     await conn.execute(`
       CREATE TABLE IF NOT EXISTS milestones (

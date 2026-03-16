@@ -4,12 +4,96 @@ const crypto = require("crypto");
 const { protect, authorize } = require("../middleware/auth");
 const { getPool } = require("../config/db");
 const { storeKYCOnChain, verifyKYCOnChain } = require("../config/blockchain");
+const bcrypt = require("bcryptjs");
 
 // ── Input validation helpers ──────────────────────────────
 // FIX 5: Added format validation before any DB write
 const GST_REGEX = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
 const PAN_REGEX = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
 const AADHAAR_REGEX = /^[0-9]{12}$/;
+
+function isDemoSeedAllowed() {
+  // Allow in dev by default, and in prod only when explicitly enabled
+  if (process.env.NODE_ENV !== "production") return true;
+  return String(process.env.DEMO_SEED_ENABLED || "").toLowerCase() === "true";
+}
+
+// ── POST /api/kyc/demo/seed ───────────────────────────────
+// Creates demo "pending KYC" borrowers for auditor showcase
+router.post(
+  "/demo/seed",
+  protect,
+  authorize("admin", "auditor", "government"),
+  async (req, res) => {
+    try {
+      if (!isDemoSeedAllowed()) {
+        return res.status(403).json({
+          success: false,
+          message: "Demo seeding is disabled. Set DEMO_SEED_ENABLED=true to allow.",
+        });
+      }
+
+      const count = Math.min(10, Math.max(1, Number(req.body?.count || 3)));
+      const pool = getPool();
+
+      const passwordHash = await bcrypt.hash("demo12345", 10);
+
+      const created = [];
+      for (let i = 0; i < count; i++) {
+        const suffix = crypto.randomBytes(3).toString("hex");
+        const wallet = "0x" + crypto.randomBytes(20).toString("hex");
+        const name = `Demo Borrower ${suffix.toUpperCase()}`;
+        const email = `demo.borrower.${suffix}@example.com`;
+
+        const businessName = `Demo MSME ${suffix.toUpperCase()}`;
+        const gstNumber = `29ABCDE1234F1Z${(i % 9) + 1}`; // passes GST_REGEX
+        const panNumber = `ABCDE${String(1000 + i).slice(-4)}F`; // passes PAN_REGEX
+        const aadhaarNumber = `${Math.floor(100000000000 + Math.random() * 899999999999)}`; // 12 digits
+        const businessType = ["Services", "Manufacturing", "Trading"][i % 3];
+        const annualTurnover = 2500000 + i * 500000;
+
+        const kycPayload = JSON.stringify({
+          email,
+          businessName,
+          gstNumber,
+          aadhaarNumber,
+          panNumber,
+          businessType,
+          annualTurnover,
+          timestamp: Date.now(),
+        });
+        const dataHash = crypto.createHash("sha256").update(kycPayload).digest("hex");
+
+        // Insert user + KYC doc. If collision (rare), just skip and continue.
+        let userId = null;
+        try {
+          const [uRes] = await pool.execute(
+            "INSERT INTO users (wallet_address, name, email, password_hash, role, kyc_status) VALUES (?,?,?,?, 'borrower', 'pending')",
+            [wallet, name, email, passwordHash]
+          );
+          userId = uRes.insertId;
+        } catch (e) {
+          continue;
+        }
+
+        await pool.execute(
+          `INSERT INTO kyc_documents
+             (user_id, business_name, gst_number, aadhaar_number, pan_number,
+              business_type, annual_turnover, doc_hash, submitted_at)
+           VALUES (?,?,?,?,?,?,?,?, NOW())`,
+          [userId, businessName, gstNumber, aadhaarNumber, panNumber, businessType, annualTurnover, dataHash]
+        );
+
+        created.push({ id: userId, name, email, wallet_address: wallet });
+      }
+
+      return res.json({ success: true, createdCount: created.length, created });
+    } catch (err) {
+      console.error("demo seed error:", err);
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  }
+);
 
 // ── POST /api/kyc/submit ──────────────────────────────────
 router.post("/submit", protect, async (req, res) => {

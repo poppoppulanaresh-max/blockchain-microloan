@@ -1034,6 +1034,7 @@ function AuditorDashboard({ user, logout }) {
   const [stats, setStats] = useState({});
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState(null);
+  const [seedLoading, setSeedLoading] = useState(false);
   const s = styles;
 
   const fetchData = async () => {
@@ -1066,6 +1067,19 @@ function AuditorDashboard({ user, logout }) {
   };
 
   useEffect(() => { fetchData(); }, []);
+
+  const seedDemo = async () => {
+    setSeedLoading(true);
+    try {
+      const api = (await import("../utils/api")).default;
+      await api.post("/api/kyc/demo/seed", { count: 3 });
+      await fetchData();
+    } catch (e) {
+      alert(e.response?.data?.message || "Failed to generate demo KYCs");
+    } finally {
+      setSeedLoading(false);
+    }
+  };
 
   const handleKYC = async (userId, status) => {
     if (!window.confirm(`${status === "verified" ? "Verify" : "Reject"} this KYC submission?`)) return;
@@ -1104,7 +1118,19 @@ function AuditorDashboard({ user, logout }) {
         {isLoading ? (
           <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading...</p>
         ) : pendingKYC.length === 0 ? (
-          <div style={s.empty}><p>✅ All KYC submissions have been reviewed.</p></div>
+          <div style={s.empty}>
+            <p>✅ No pending KYC submissions.</p>
+            <p style={{ marginTop: 8, color: "#4a7090", fontSize: 12 }}>
+              For demo/showcase you can generate sample KYC entries and then Verify/Reject them.
+            </p>
+            <button
+              onClick={seedDemo}
+              disabled={seedLoading}
+              style={{ ...s.btnOutline, marginTop: 14, borderColor: "#ffd32a", color: "#ffd32a" }}
+            >
+              {seedLoading ? "Generating..." : "+ Generate Demo KYCs"}
+            </button>
+          </div>
         ) : (
           pendingKYC.map((u) => (
             <div key={u.id} style={{ ...s.loanCard, borderColor: "#ffd32a", marginBottom: 10 }}>
