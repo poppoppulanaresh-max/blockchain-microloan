@@ -687,7 +687,7 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
 
         {/* All loans */}
         <h2 style={s.sectionTitle}>All Loan Applications</h2>
-        {loading ? (
+        {isLoading ? (
           <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading blockchain data...</p>
         ) : loans.length === 0 ? (
           <div style={s.empty}>
@@ -796,7 +796,7 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
 
         {/* Pending loans to review */}
         <h2 style={{ ...s.sectionTitle, color: "#ffd32a" }}>⚡ Pending Loan Requests — Action Required</h2>
-        {loading ? (
+        {isLoading ? (
           <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading...</p>
         ) : pendingLoans.length === 0 ? (
           <div style={s.empty}><p>No pending loan requests at this time.</p></div>
@@ -972,7 +972,7 @@ function AuditorDashboard({ user, logout }) {
 
         {/* Pending KYC — primary action */}
         <h2 style={{ ...s.sectionTitle, color: "#ffd32a" }}>⚠️ Pending KYC Verifications ({pendingKYC.length})</h2>
-        {loading ? (
+        {isLoading ? (
           <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading...</p>
         ) : pendingKYC.length === 0 ? (
           <div style={s.empty}><p>✅ All KYC submissions have been reviewed.</p></div>
@@ -1450,7 +1450,7 @@ export function AuditLogs() {
             <span key={action} style={{ ...s.badge, color, borderColor: color, background: `${color}10`, fontSize: 10 }}>{action}</span>
           ))}
         </div>
-        {loading ? (
+        {isLoading ? (
           <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading audit trail...</p>
         ) : (
           <div style={{ ...s.card, padding: 0, overflow: "hidden", margin: 0 }}>
