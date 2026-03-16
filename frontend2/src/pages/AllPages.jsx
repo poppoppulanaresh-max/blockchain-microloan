@@ -1045,7 +1045,6 @@ function GovernmentDashboard({ user, logout }) {
   const [allLoans, setAllLoans] = useState([]);
   const [logs, setLogs] = useState([]);
   const [activeTab, setActiveTab] = useState("overview");
-  const [isLoading, setIsLoading] = useState(true);
   const s = styles;
 
   useEffect(() => {
@@ -1059,7 +1058,7 @@ function GovernmentDashboard({ user, logout }) {
         setStats(dashRes.data.stats || {});
         setAllLoans(dashRes.data.recentLoans || []);
         setLogs(logsRes.data.logs || []);
-      } catch (e) { console.error(e); } finally { setIsLoading(false); }
+      } catch (e) { console.error(e); }
     };
     fetchData();
   }, []);
