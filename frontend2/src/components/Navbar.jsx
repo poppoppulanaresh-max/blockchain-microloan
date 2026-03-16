@@ -22,20 +22,22 @@ export default function Navbar() {
     lender: [
       { to: "/dashboard",     label: "Dashboard" },
       { to: "/kyc",           label: "KYC" },
-      { to: "/lender/review", label: "Review Loans" }
+      { to: "/lender",        label: "Review Loans" }
     ],
     admin: [
       { to: "/dashboard",  label: "Dashboard" },
       { to: "/admin",      label: "Admin Panel" },
-      { to: "/audit-logs", label: "Audit Logs" }
+      { to: "/audit",      label: "Audit Logs" }
     ],
     auditor: [
       { to: "/dashboard",  label: "Dashboard" },
-      { to: "/audit-logs", label: "Audit Logs" }
+      { to: "/admin",      label: "KYC Verify" },
+      { to: "/audit",      label: "Audit Logs" }
     ],
     government: [
       { to: "/dashboard",  label: "Dashboard" },
-      { to: "/audit-logs", label: "Audit Logs" }
+      { to: "/admin",      label: "Admin Panel" },
+      { to: "/audit",      label: "Audit Logs" }
     ]
   };
 

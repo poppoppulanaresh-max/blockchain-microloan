@@ -4,7 +4,7 @@ const { getPool }            = require("../config/db");
 const { protect, authorize } = require("../middleware/auth");
 
 // ── GET /api/admin/dashboard ──────────────────────────
-router.get("/dashboard", protect, authorize("admin"), async (req, res) => {
+router.get("/dashboard", protect, authorize("admin", "auditor", "government"), async (req, res) => {
   try {
     const pool = getPool();
     const [[stats]] = await pool.execute(`

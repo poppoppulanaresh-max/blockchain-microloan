@@ -581,11 +581,12 @@ export function ApplyLoan() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const { connected } = useWeb3();
+  const { connected, loading: web3Loading, account, connectWallet } = useWeb3();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!connected) return setError("Connect MetaMask first");
+    if (web3Loading) return setError("Checking wallet connection… please try again in a second.");
+    if (!account) return setError("Connect MetaMask first");
     setLoading(true);
     setError("");
     try {
@@ -617,6 +618,18 @@ export function ApplyLoan() {
       <div style={{ ...s.card, maxWidth: 540 }}>
         <h2 style={s.title}>Apply for Loan</h2>
         <p style={s.subtitle}>MSME Blockchain-Backed Microloan</p>
+        {!connected && (
+          <div style={{ ...s.warning, marginBottom: 16 }}>
+            ⚠ Wallet not connected.{" "}
+            <button
+              type="button"
+              onClick={connectWallet}
+              style={{ ...s.smallBtn, borderColor: "#ffd32a", color: "#ffd32a" }}
+            >
+              Connect MetaMask
+            </button>
+          </div>
+        )}
         {result ? (
           <div>
             <div style={result.status === "REJECTED" ? s.error : s.success}>
@@ -676,7 +689,7 @@ export function ApplyLoan() {
               </div>
             )}
             {error && <div style={s.error}>⚠ {error}</div>}
-            <button type="submit" style={s.btn} disabled={loading}>{loading ? "Submitting to Blockchain..." : "Submit Loan Application →"}</button>
+            <button type="submit" style={s.btn} disabled={loading || web3Loading}>{loading ? "Submitting to Blockchain..." : "Submit Loan Application →"}</button>
           </form>
         )}
       </div>
@@ -1027,14 +1040,29 @@ function AuditorDashboard({ user, logout }) {
     setIsLoading(true);
     try {
       const api = (await import("../utils/api")).default;
-      const [kycRes, dashRes] = await Promise.all([
+      const [kycRes, dashRes] = await Promise.allSettled([
         api.get("/api/kyc/pending"),
         api.get("/api/admin/dashboard"),
       ]);
-      setPendingKYC(kycRes.data.pending || []);
-      setStats(dashRes.data.stats || {});
-      setRecentLoans(dashRes.data.recentLoans || []);
-    } catch (e) { console.error(e); } finally { setIsLoading(false); }
+
+      if (kycRes.status === "fulfilled") {
+        setPendingKYC(kycRes.value.data.pending || []);
+      } else {
+        console.error(kycRes.reason);
+        setPendingKYC([]);
+      }
+
+      if (dashRes.status === "fulfilled") {
+        setStats(dashRes.value.data.stats || {});
+        setRecentLoans(dashRes.value.data.recentLoans || []);
+      } else {
+        console.error(dashRes.reason);
+        setStats({});
+        setRecentLoans([]);
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => { fetchData(); }, []);
