@@ -373,22 +373,60 @@ export function Login() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   KYC SUBMIT
+   KYC SUBMIT  (fixed: status-check on load, validation, step advance)
 ═══════════════════════════════════════════════════════════════════ */
 export function KYCSubmit() {
   const [form, setForm] = useState({ businessName: "", gstNumber: "", aadhaarNumber: "", panNumber: "", businessType: "", annualTurnover: "" });
-  const [status, setStatus] = useState(null);
+  const [submitted, setSubmitted] = useState(null); // { msg, txHash }
+  const [kycStatus, setKycStatus] = useState(null); // existing status from server
+  const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(true);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({});
+
+  // FIX: load existing KYC status on mount — prevent re-submission, advance stepper
+  useEffect(() => {
+    (async () => {
+      try {
+        const api = (await import("../utils/api")).default;
+        const res = await api.get("/api/kyc/status");
+        const st = res.data.kyc_status;
+        setKycStatus(st);
+        if (st === "pending")  setStep(2);
+        if (st === "verified") setStep(3);
+      } catch (_) { /* not submitted yet — stay on step 1 */ }
+      finally { setStatusLoading(false); }
+    })();
+  }, []);
+
+  // FIX: client-side validation
+  const validate = () => {
+    const GST_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+    const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
+    const AAD_RE = /^[0-9]{12}$/;
+    const e = {};
+    if (!form.businessName.trim())                            e.businessName   = "Required";
+    if (!GST_RE.test(form.gstNumber))                         e.gstNumber      = "Invalid format (e.g. 29ABCDE1234F1Z5)";
+    if (!PAN_RE.test(form.panNumber))                         e.panNumber      = "Invalid format (e.g. ABCDE1234F)";
+    if (!AAD_RE.test(form.aadhaarNumber.replace(/\s/g, ""))) e.aadhaarNumber  = "Must be 12 digits";
+    if (!form.businessType)                                    e.businessType   = "Required";
+    if (!form.annualTurnover || isNaN(Number(form.annualTurnover))) e.annualTurnover = "Enter a valid number";
+    setFieldErrors(e);
+    return Object.keys(e).length === 0;
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
     setError("");
+    if (!validate()) return;
+    setLoading(true);
     try {
       const api = (await import("../utils/api")).default;
       const res = await api.post("/api/kyc/submit", form);
-      setStatus({ msg: res.data.message, txHash: res.data.txHash });
+      setSubmitted({ msg: res.data.message, txHash: res.data.txHash });
+      setKycStatus("pending");
+      setStep(2); // FIX: advance stepper on success
     } catch (err) {
       setError(err.response?.data?.message || "Submission failed");
     } finally {
@@ -396,73 +434,130 @@ export function KYCSubmit() {
     }
   };
 
-  const f = (k, v) => setForm((p) => ({ ...p, [k]: v }));
+  const f = (k, v) => { setForm((p) => ({ ...p, [k]: v })); setFieldErrors((p) => ({ ...p, [k]: undefined })); };
   const s = styles;
+
+  // Step tab indicator
+  const stepLabels = ["Business Info", "On-Chain Hash", "Verification"];
+  const StepTabs = () => (
+    <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+      {stepLabels.map((label, i) => {
+        const idx = i + 1;
+        const active = idx === step;
+        const done   = idx < step;
+        return (
+          <div key={label} style={{ flex: 1, padding: "6px 8px", borderRadius: 4, textAlign: "center", fontSize: 11, fontFamily: "monospace",
+            background: active ? "rgba(0,212,255,0.1)" : done ? "rgba(0,255,159,0.08)" : "#0c1829",
+            border: `1px solid ${active ? "#00d4ff" : done ? "#00ff9f" : "#1a3a5c"}`,
+            color: active ? "#00d4ff" : done ? "#00ff9f" : "#4a7090",
+          }}>{done ? "✓ " : ""}{label}</div>
+        );
+      })}
+    </div>
+  );
+
+  if (statusLoading) return <div style={s.page}><p style={{ color: "#4a7090", padding: 40 }}>Loading KYC status...</p></div>;
 
   return (
     <div style={s.page}>
       <div style={{ ...s.card, maxWidth: 540 }}>
         <h2 style={s.title}>KYC Verification</h2>
-        <p style={{ ...s.subtitle, marginBottom: 6 }}>Step 1 of 2 — Identity Verification</p>
-        <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
-          {["Business Info", "On-Chain Hash", "Verification"].map((step, i) => (
-            <div key={step} style={{ flex: 1, padding: "6px 8px", borderRadius: 4, background: i === 0 ? "rgba(0,212,255,0.1)" : "#0c1829", border: `1px solid ${i === 0 ? "#00d4ff" : "#1a3a5c"}`, textAlign: "center", fontSize: 11, color: i === 0 ? "#00d4ff" : "#4a7090", fontFamily: "monospace" }}>{step}</div>
-          ))}
-        </div>
-        <div style={{ ...s.infoBox, marginBottom: 20 }}>
-          <p style={{ margin: 0 }}>🔐 Your document hash is stored on Ethereum. Sensitive data remains encrypted in our secure database — only a cryptographic proof goes on-chain.</p>
-        </div>
-        {status ? (
+        <p style={{ ...s.subtitle, marginBottom: 6 }}>Step {step} of 3 — {["Identity Verification", "On-Chain Hash Stored", "Verification Complete"][step - 1]}</p>
+
+        <StepTabs />
+
+        {/* Already verified */}
+        {kycStatus === "verified" && !submitted && (
           <div style={s.success}>
-            <p style={{ fontWeight: 700 }}>✅ {status.msg}</p>
-            <p style={{ fontSize: 12, color: "#4a7090", marginTop: 8 }}>KYC status is now pending admin verification.</p>
-            {status.txHash && (
+            <p style={{ fontWeight: 700 }}>✅ KYC Already Verified</p>
+            <p style={{ fontSize: 13, marginTop: 8 }}>Your KYC has been verified. You can now apply for loans.</p>
+            <Link to="/loans/apply" style={{ color: "#00d4ff", display: "block", marginTop: 16, fontSize: 13 }}>Apply for a Loan →</Link>
+          </div>
+        )}
+
+        {/* Already pending */}
+        {kycStatus === "pending" && !submitted && (
+          <div style={s.warning}>
+            <p style={{ fontWeight: 700 }}>⏳ KYC Under Review</p>
+            <p style={{ fontSize: 13, marginTop: 8 }}>Your documents have been submitted and are awaiting admin/auditor verification.</p>
+            <Link to="/dashboard" style={{ color: "#ffd32a", display: "block", marginTop: 16, fontSize: 13 }}>← Back to Dashboard</Link>
+          </div>
+        )}
+
+        {/* Success after fresh submit */}
+        {submitted && (
+          <div style={s.success}>
+            <p style={{ fontWeight: 700 }}>✅ {submitted.msg}</p>
+            <p style={{ fontSize: 12, color: "#4a7090", marginTop: 8 }}>KYC is now pending admin/auditor verification.</p>
+            {submitted.txHash && (
               <div style={{ marginTop: 12 }}>
                 <p style={{ fontSize: 11, fontFamily: "monospace", color: "#4a7090" }}>Ethereum Tx Hash:</p>
-                <p style={{ fontSize: 11, fontFamily: "monospace", color: "#00d4ff", wordBreak: "break-all", marginTop: 4 }}>{status.txHash}</p>
+                <p style={{ fontSize: 11, fontFamily: "monospace", color: "#00d4ff", wordBreak: "break-all", marginTop: 4 }}>{submitted.txHash}</p>
               </div>
             )}
             <Link to="/dashboard" style={{ color: "#00d4ff", display: "block", marginTop: 16, fontSize: 13 }}>← Back to Dashboard</Link>
           </div>
-        ) : (
-          <form onSubmit={handleSubmit} style={s.form}>
-            <div style={s.field}>
-              <label style={s.label}>Business Name</label>
-              <input style={s.input} placeholder="Registered business name" required value={form.businessName} onChange={(e) => f("businessName", e.target.value)} />
+        )}
+
+        {/* Show form only if not yet submitted */}
+        {kycStatus !== "verified" && kycStatus !== "pending" && !submitted && (
+          <>
+            <div style={{ ...s.infoBox, marginBottom: 20 }}>
+              <p style={{ margin: 0 }}>🔐 Your document hash is stored on Ethereum. Sensitive data remains encrypted in our secure database — only a cryptographic proof goes on-chain.</p>
             </div>
-            <div style={s.field}>
-              <label style={s.label}>GST Number</label>
-              <input style={s.input} placeholder="e.g. 29ABCDE1234F1Z5" required value={form.gstNumber} onChange={(e) => f("gstNumber", e.target.value)} />
-            </div>
-            <div style={s.grid2}>
+            {kycStatus === "rejected" && (
+              <div style={{ ...s.warning, marginBottom: 16 }}>⚠ Your previous KYC was rejected. You may resubmit with corrected information.</div>
+            )}
+            <form onSubmit={handleSubmit} style={s.form}>
               <div style={s.field}>
-                <label style={s.label}>Aadhaar Number</label>
-                <input style={s.input} placeholder="XXXX XXXX XXXX" required value={form.aadhaarNumber} onChange={(e) => f("aadhaarNumber", e.target.value)} />
+                <label style={s.label}>Business Name</label>
+                <input style={{ ...s.input, ...(fieldErrors.businessName ? { borderColor: "#ff4757" } : {}) }} placeholder="Registered business name" value={form.businessName} onChange={(e) => f("businessName", e.target.value)} />
+                {fieldErrors.businessName && <span style={{ color: "#ff4757", fontSize: 11 }}>{fieldErrors.businessName}</span>}
               </div>
               <div style={s.field}>
-                <label style={s.label}>PAN Number</label>
-                <input style={s.input} placeholder="ABCDE1234F" value={form.panNumber} onChange={(e) => f("panNumber", e.target.value)} />
+                <label style={s.label}>GST Number</label>
+                <input style={{ ...s.input, ...(fieldErrors.gstNumber ? { borderColor: "#ff4757" } : {}) }} placeholder="e.g. 29ABCDE1234F1Z5" value={form.gstNumber} onChange={(e) => f("gstNumber", e.target.value.toUpperCase())} />
+                {fieldErrors.gstNumber && <span style={{ color: "#ff4757", fontSize: 11 }}>{fieldErrors.gstNumber}</span>}
               </div>
-            </div>
-            <div style={s.grid2}>
-              <div style={s.field}>
-                <label style={s.label}>Business Type</label>
-                <select style={s.input} value={form.businessType} onChange={(e) => f("businessType", e.target.value)}>
-                  <option value="">Select type</option>
-                  <option value="manufacturing">Manufacturing</option>
-                  <option value="services">Services</option>
-                  <option value="trading">Trading</option>
-                  <option value="retail">Retail</option>
-                </select>
+              <div style={s.grid2}>
+                <div style={s.field}>
+                  <label style={s.label}>Aadhaar Number</label>
+                  <input style={{ ...s.input, ...(fieldErrors.aadhaarNumber ? { borderColor: "#ff4757" } : {}) }} placeholder="XXXX XXXX XXXX" value={form.aadhaarNumber} onChange={(e) => f("aadhaarNumber", e.target.value)} />
+                  {fieldErrors.aadhaarNumber && <span style={{ color: "#ff4757", fontSize: 11 }}>{fieldErrors.aadhaarNumber}</span>}
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>PAN Number</label>
+                  <input style={{ ...s.input, ...(fieldErrors.panNumber ? { borderColor: "#ff4757" } : {}) }} placeholder="ABCDE1234F" value={form.panNumber} onChange={(e) => f("panNumber", e.target.value.toUpperCase())} />
+                  {fieldErrors.panNumber && <span style={{ color: "#ff4757", fontSize: 11 }}>{fieldErrors.panNumber}</span>}
+                </div>
               </div>
-              <div style={s.field}>
-                <label style={s.label}>Annual Turnover (₹)</label>
-                <input style={s.input} placeholder="e.g. 5000000" type="number" value={form.annualTurnover} onChange={(e) => f("annualTurnover", e.target.value)} />
+              <div style={s.grid2}>
+                <div style={s.field}>
+                  <label style={s.label}>Business Type</label>
+                  <select style={{ ...s.input, ...(fieldErrors.businessType ? { borderColor: "#ff4757" } : {}) }} value={form.businessType} onChange={(e) => f("businessType", e.target.value)}>
+                    <option value="">Select type</option>
+                    <option value="Sole Proprietorship">Sole Proprietorship</option>
+                    <option value="Partnership">Partnership</option>
+                    <option value="Private Limited">Private Limited</option>
+                    <option value="LLP">LLP</option>
+                    <option value="OPC">OPC</option>
+                    <option value="manufacturing">Manufacturing</option>
+                    <option value="services">Services</option>
+                    <option value="trading">Trading</option>
+                    <option value="retail">Retail</option>
+                  </select>
+                  {fieldErrors.businessType && <span style={{ color: "#ff4757", fontSize: 11 }}>{fieldErrors.businessType}</span>}
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Annual Turnover (₹)</label>
+                  <input style={{ ...s.input, ...(fieldErrors.annualTurnover ? { borderColor: "#ff4757" } : {}) }} placeholder="e.g. 5000000" type="number" value={form.annualTurnover} onChange={(e) => f("annualTurnover", e.target.value)} />
+                  {fieldErrors.annualTurnover && <span style={{ color: "#ff4757", fontSize: 11 }}>{fieldErrors.annualTurnover}</span>}
+                </div>
               </div>
-            </div>
-            {error && <div style={s.error}>⚠ {error}</div>}
-            <button style={s.btn} type="submit" disabled={loading}>{loading ? "Submitting to Blockchain..." : "Submit KYC Documents →"}</button>
-          </form>
+              {error && <div style={s.error}>⚠ {error}</div>}
+              <button style={s.btn} type="submit" disabled={loading}>{loading ? "Submitting to Blockchain..." : "Submit KYC Documents →"}</button>
+            </form>
+          </>
         )}
       </div>
     </div>
@@ -923,31 +1018,41 @@ function AuditorDashboard({ user, logout }) {
   const [recentLoans, setRecentLoans] = useState([]);
   const [stats, setStats] = useState({});
   const [isLoading, setIsLoading] = useState(true);
+  const [actionLoadingId, setActionLoadingId] = useState(null); // FIX: per-button loading
   const s = styles;
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const api = (await import("../utils/api")).default;
-        const [kycRes, dashRes] = await Promise.all([
-          api.get("/api/kyc/pending"),
-          api.get("/api/admin/dashboard"),
-        ]);
-        setPendingKYC(kycRes.data.pending || []);
-        setStats(dashRes.data.stats || {});
-        setRecentLoans(dashRes.data.recentLoans || []);
-      } catch (e) { console.error(e); } finally { setIsLoading(false); }
-    };
-    fetchData();
-  }, []);
+  // FIX: extracted so we can re-call after verify/reject without page reload
+  const fetchData = async () => {
+    setIsLoading(true);
+    try {
+      const api = (await import("../utils/api")).default;
+      const [kycRes, dashRes] = await Promise.all([
+        api.get("/api/kyc/pending"),
+        api.get("/api/admin/dashboard"),
+      ]);
+      setPendingKYC(kycRes.data.pending || []);
+      setStats(dashRes.data.stats || {});
+      setRecentLoans(dashRes.data.recentLoans || []);
+    } catch (e) { console.error(e); } finally { setIsLoading(false); }
+  };
 
+  useEffect(() => { fetchData(); }, []);
+
+  // FIX: no window.location.reload — just re-fetch and remove item from list
   const handleKYC = async (userId, status) => {
+    if (!window.confirm(`${status === "verified" ? "Verify" : "Reject"} this KYC submission?`)) return;
+    setActionLoadingId(userId);
     try {
       const api = (await import("../utils/api")).default;
       await api.post(`/api/kyc/verify/${userId}`, { status });
-      alert(`KYC ${status} successfully`);
-      window.location.reload();
-    } catch (e) { alert("Failed to update KYC"); }
+      // Remove from list immediately for instant feedback, then re-fetch stats
+      setPendingKYC((prev) => prev.filter((u) => u.id !== userId));
+      setStats((prev) => ({ ...prev, pending_kyc: Math.max(0, (prev.pending_kyc || 0) - 1) }));
+    } catch (e) {
+      alert(e.response?.data?.message || "Failed to update KYC");
+    } finally {
+      setActionLoadingId(null);
+    }
   };
 
   return (
@@ -995,8 +1100,8 @@ function AuditorDashboard({ user, logout }) {
                   </p>
                 </div>
                 <div style={{ display: "flex", gap: 8 }}>
-                  <button onClick={() => handleKYC(u.id, "verified")} style={{ ...s.btn, background: "linear-gradient(135deg,#00ff9f,#00cc7a)", padding: "8px 20px", fontSize: 13 }}>Verify ✅</button>
-                  <button onClick={() => handleKYC(u.id, "rejected")} style={{ ...s.btn, background: "linear-gradient(135deg,#ff4757,#cc0018)", padding: "8px 20px", fontSize: 13 }}>Reject ❌</button>
+                  <button onClick={() => handleKYC(u.id, "verified")} disabled={actionLoadingId === u.id} style={{ ...s.btn, background: "linear-gradient(135deg,#00ff9f,#00cc7a)", padding: "8px 20px", fontSize: 13, opacity: actionLoadingId === u.id ? 0.6 : 1 }}>{actionLoadingId === u.id ? "..." : "Verify ✅"}</button>
+                  <button onClick={() => handleKYC(u.id, "rejected")} disabled={actionLoadingId === u.id} style={{ ...s.btn, background: "linear-gradient(135deg,#ff4757,#cc0018)", padding: "8px 20px", fontSize: 13, opacity: actionLoadingId === u.id ? 0.6 : 1 }}>{actionLoadingId === u.id ? "..." : "Reject ❌"}</button>
                 </div>
               </div>
             </div>
@@ -1391,11 +1496,13 @@ function LenderPendingList() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   ADMIN PANEL (for auditor/government /admin route)
+   ADMIN PANEL  (fixed: admin role now gets AuditorDashboard with full KYC controls)
 ═══════════════════════════════════════════════════════════════════ */
 export function AdminPanel() {
   const { user, logout } = useAuth();
   if (!user) return null;
+  // admin and auditor both need KYC verify/reject capability → AuditorDashboard
+  if (user.role === "admin")   return <AuditorDashboard user={user} logout={logout} />;
   if (user.role === "auditor") return <AuditorDashboard user={user} logout={logout} />;
   return <GovernmentDashboard user={user} logout={logout} />;
 }

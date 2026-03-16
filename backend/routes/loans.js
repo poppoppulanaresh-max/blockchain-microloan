@@ -1,29 +1,32 @@
-// backend/routes/loans.js
-const router   = require("express").Router();
-const { getPool }            = require("../config/db");
+const express = require("express");
+const router = express.Router();
 const { protect, authorize } = require("../middleware/auth");
+const { getPool } = require("../config/db");
 const { setCreditScoreOnChain, getLoanStatusFromChain } = require("../config/blockchain");
 
-// ── Credit Score Engine ────────────────────────────────
+// ── Credit Score Engine ───────────────────────────────────
 async function calculateCreditScore(borrowerId, loanAmount, pool) {
-  const [kyc]    = await pool.execute(
-    "SELECT annual_turnover FROM kyc_documents WHERE user_id=?", [borrowerId]
+  const [kyc] = await pool.execute(
+    "SELECT annual_turnover FROM kyc_documents WHERE user_id=?",
+    [borrowerId]
   );
-  const [history] = await pool.execute(`
-    SELECT COUNT(*) as total,
-           SUM(CASE WHEN status='COMPLETED' THEN 1 ELSE 0 END) as completed,
-           SUM(CASE WHEN status='DEFAULTED' THEN 1 ELSE 0 END) as defaulted
-    FROM loans WHERE borrower_id=?
-  `, [borrowerId]);
+  const [history] = await pool.execute(
+    `SELECT
+       COUNT(*) AS total,
+       SUM(status='COMPLETED') AS completed,
+       SUM(status='DEFAULTED')  AS defaulted
+     FROM loans WHERE borrower_id=?`,
+    [borrowerId]
+  );
 
   let score = 600;
 
   const turnover = parseFloat(kyc[0]?.annual_turnover || 0);
-  const amount   = parseFloat(loanAmount) / 1e18;
+  const amount = parseFloat(loanAmount) / 1e18;
 
-  if (turnover > 5000000)      score += 100;
+  if (turnover > 5000000) score += 100;
   else if (turnover > 1000000) score += 50;
-  else if (turnover < 100000)  score -= 100;
+  else if (turnover < 100000) score -= 100;
 
   const { total, completed, defaulted } = history[0];
   if (total > 0) {
@@ -35,25 +38,31 @@ async function calculateCreditScore(borrowerId, loanAmount, pool) {
   if (turnover > 0) {
     const ratio = amount / (turnover / 1e18);
     if (ratio > 0.5) score -= 80;
-    if (ratio > 1.0) score -= 120;
+    else if (ratio < 0.1) score += 30;
   }
 
   return Math.min(850, Math.max(300, score));
 }
 
-// ── POST /api/loans/apply ──────────────────────────────
+// ── POST /api/loans/apply ─────────────────────────────────
 router.post("/apply", protect, authorize("borrower"), async (req, res) => {
   try {
-    const { amountWei, interestRate, tenureMonths, collateral } = req.body;
-
-    if (!amountWei || !tenureMonths) {
-      return res.status(400).json({ success: false, message: "Amount and tenure required" });
-    }
-    if (req.user.kyc_status !== "verified") {
-      return res.status(403).json({ success: false, message: "KYC must be verified before applying" });
+    const { amountWei, interestRate, durationDays, purpose } = req.body;
+    if (!amountWei || !interestRate || !durationDays) {
+      return res.status(400).json({ success: false, message: "amountWei, interestRate and durationDays are required" });
     }
 
     const pool = getPool();
+
+    // Borrower must have verified KYC before applying
+    const [userRows] = await pool.execute(
+      "SELECT kyc_status FROM users WHERE id=?",
+      [req.user.id]
+    );
+    if (!userRows.length || userRows[0].kyc_status !== "verified") {
+      return res.status(403).json({ success: false, message: "KYC must be verified before applying for a loan" });
+    }
+
     const creditScore = await calculateCreditScore(req.user.id, amountWei, pool);
 
     const { Web3 } = require("web3");
@@ -63,23 +72,24 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
     );
 
     const initialStatus = creditScore < 500 ? "REJECTED" : "PENDING";
-    const rejectReason  = creditScore < 500 ? "Credit score below minimum threshold (500)" : null;
+    const rejectReason = creditScore < 500 ? "Credit score below minimum threshold (500)" : null;
 
-    const [result] = await pool.execute(`
-      INSERT INTO loans
-        (loan_id_hash, borrower_id, amount_wei, interest_rate,
-         tenure_months, collateral, status, credit_score)
-      VALUES (?,?,?,?,?,?,?,?)
-    `, [loanIdHash, req.user.id, amountWei, interestRate || 1200,
-        tenureMonths, collateral, initialStatus, creditScore]);
+    const [result] = await pool.execute(
+      `INSERT INTO loans
+         (loan_id_hash, borrower_id, amount_wei, interest_rate,
+          duration_days, purpose, credit_score, status, reject_reason)
+       VALUES (?,?,?,?,?,?,?,?,?)`,
+      [loanIdHash, req.user.id, amountWei, interestRate,
+       durationDays, purpose || null, creditScore, initialStatus, rejectReason]
+    );
 
     const loanDbId = result.insertId;
 
     try {
       const tx = await setCreditScoreOnChain(loanIdHash, creditScore);
       await pool.execute(
-        "UPDATE loans SET tx_hash_created=? WHERE id=?",
-        [tx.transactionHash, loanDbId]
+        "UPDATE loans SET tx_hash_credit=? WHERE id=?",
+        [tx.hash, loanDbId]
       );
     } catch (chainErr) {
       console.warn("Blockchain sync failed (non-fatal):", chainErr.message);
@@ -88,161 +98,197 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
     if (initialStatus !== "REJECTED") {
       const milestones = [
         { stage: 1, pct: 20 },
-        { stage: 2, pct: 30 },
-        { stage: 3, pct: 30 },
-        { stage: 4, pct: 20 }
+        { stage: 2, pct: 40 },
+        { stage: 3, pct: 60 },
+        { stage: 4, pct: 80 },
+        { stage: 5, pct: 100 },
       ];
       for (const m of milestones) {
         await pool.execute(
-          "INSERT INTO milestones (loan_id, stage, release_percent) VALUES (?,?,?)",
+          "INSERT INTO milestones (loan_id, stage, pct, status) VALUES (?,?,?,'PENDING')",
           [loanDbId, m.stage, m.pct]
         );
       }
     }
 
-    await pool.execute(`
-      INSERT INTO audit_logs (loan_id, actor_wallet, action, details)
-      VALUES (?, ?, 'LOAN_APPLIED', ?)
-    `, [loanDbId, req.user.wallet_address, JSON.stringify({ creditScore, amountWei })]);
+    await pool.execute(
+      `INSERT INTO audit_logs (loan_id, actor_wallet, action, details)
+       VALUES (?, ?, 'LOAN_APPLIED', ?)`,
+      [loanDbId, req.user.wallet_address,
+       JSON.stringify({ amountWei, creditScore, status: initialStatus })]
+    );
 
-    res.status(201).json({
-      success:     true,
-      loanId:      loanDbId,
+    res.json({
+      success: true,
+      loanId: loanDbId,
       loanIdHash,
       creditScore,
-      status:      initialStatus,
+      status: initialStatus,
       rejectReason,
-      message:     initialStatus === "REJECTED"
-        ? "Loan auto-rejected: credit score too low"
-        : "Loan application submitted successfully"
     });
   } catch (err) {
-    console.error(err);
+    console.error("Loan apply error:", err);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── GET /api/loans/my ─────────────────────────────────
+// ── GET /api/loans/my ─────────────────────────────────────
 router.get("/my", protect, async (req, res) => {
   try {
     const pool = getPool();
-    const field = req.user.role === "lender" ? "lender_id" : "borrower_id";
-    const [loans] = await pool.execute(`
-      SELECT l.*, u.name AS borrower_name, u.wallet_address AS borrower_wallet,
-             lu.name AS lender_name
-      FROM loans l
-      JOIN users u ON u.id = l.borrower_id
-      LEFT JOIN users lu ON lu.id = l.lender_id
-      WHERE l.${field} = ?
-      ORDER BY l.applied_at DESC
-    `, [req.user.id]);
-    res.json({ success: true, loans });
+    const [loans] = await pool.execute(
+      `SELECT l.*, m.stage, m.pct, m.status AS milestone_status, m.tx_hash AS milestone_tx
+       FROM loans l
+       LEFT JOIN milestones m ON m.loan_id = l.id
+       WHERE l.borrower_id = ?
+       ORDER BY l.applied_at DESC, m.stage ASC`,
+      [req.user.id]
+    );
+
+    // Group milestones into each loan
+    const loanMap = {};
+    for (const row of loans) {
+      if (!loanMap[row.id]) {
+        const { stage, pct, milestone_status, milestone_tx, ...loanData } = row;
+        loanMap[row.id] = { ...loanData, milestones: [] };
+      }
+      if (row.stage) {
+        loanMap[row.id].milestones.push({
+          stage: row.stage,
+          pct: row.pct,
+          status: row.milestone_status,
+          tx_hash: row.milestone_tx,
+        });
+      }
+    }
+
+    res.json({ success: true, loans: Object.values(loanMap) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── GET /api/loans/pending ─────────────────────────────
-// FIX 1: Added "auditor" to authorize() so auditors can also see pending loans
-// FIX 2: Added pan_number, aadhaar_number, business_type to the KYC join
+// ── GET /api/loans/pending ────────────────────────────────
+// FIX 1 (from commit): Added "auditor" + "government" to authorize()
+// FIX 2 (from commit): KYC join now includes pan, aadhaar, business_type
+// FIX (from commit):   JOIN → LEFT JOIN so loans without KYC still show
 router.get("/pending", protect, authorize("lender", "auditor", "government", "admin"), async (req, res) => {
   try {
     const pool = getPool();
-    const [loans] = await pool.execute(`
-      SELECT
-        l.*,
-        u.name            AS borrower_name,
-        u.email           AS borrower_email,
-        u.wallet_address  AS borrower_wallet,
-        k.business_name,
-        k.annual_turnover,
-        k.gst_number,
-        k.pan_number,
-        k.aadhaar_number,
-        k.business_type
-      FROM loans l
-      JOIN users u        ON u.id        = l.borrower_id
-      LEFT JOIN kyc_documents k ON k.user_id = l.borrower_id
-      WHERE l.status = 'PENDING'
-      ORDER BY l.applied_at DESC
-    `);
+    const [loans] = await pool.execute(
+      `SELECT
+         l.*,
+         u.name             AS borrower_name,
+         u.email            AS borrower_email,
+         u.wallet_address   AS borrower_wallet,
+         k.business_name,
+         k.annual_turnover,
+         k.gst_number,
+         k.pan_number,
+         k.aadhaar_number,
+         k.business_type
+       FROM loans l
+       JOIN  users u ON u.id = l.borrower_id
+       LEFT JOIN kyc_documents k ON k.user_id = l.borrower_id
+       WHERE l.status = 'PENDING'
+       ORDER BY l.applied_at DESC`
+    );
     res.json({ success: true, loans });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── GET /api/loans/my-approved ────────────────────────
-// FIX 3: This route was missing entirely — lender's "My Investments" tab was always empty
+// ── GET /api/loans/my-approved ────────────────────────────
+// FIX 3 (from commit): This route was missing — lender "My Investments" was always empty
+// FIX 4 (new):         Replaced N+1 milestone loop with a single JOIN query
 router.get("/my-approved", protect, authorize("lender"), async (req, res) => {
   try {
     const pool = getPool();
-    const [loans] = await pool.execute(`
-      SELECT
-        l.*,
-        u.name            AS borrower_name,
-        u.email           AS borrower_email,
-        u.wallet_address  AS borrower_wallet,
-        k.business_name,
-        k.annual_turnover,
-        k.gst_number,
-        k.pan_number,
-        k.aadhaar_number,
-        k.business_type
-      FROM loans l
-      JOIN users u              ON u.id        = l.borrower_id
-      LEFT JOIN kyc_documents k ON k.user_id   = l.borrower_id
-      WHERE l.lender_id = ?
-        AND l.status IN ('APPROVED', 'ACTIVE', 'COMPLETED', 'DEFAULTED')
-      ORDER BY l.approved_at DESC
-    `, [req.user.id]);
 
-    // Attach milestones to each loan
-    for (const loan of loans) {
-      const [milestones] = await pool.execute(
-        "SELECT * FROM milestones WHERE loan_id = ? ORDER BY stage",
-        [loan.id]
-      );
-      loan.milestones = milestones;
+    // Single query: loans + milestones joined — no N+1
+    const [rows] = await pool.execute(
+      `SELECT
+         l.*,
+         u.name             AS borrower_name,
+         u.email            AS borrower_email,
+         u.wallet_address   AS borrower_wallet,
+         k.business_name,
+         k.annual_turnover,
+         k.gst_number,
+         k.pan_number,
+         k.aadhaar_number,
+         k.business_type,
+         m.stage            AS milestone_stage,
+         m.pct              AS milestone_pct,
+         m.status           AS milestone_status,
+         m.tx_hash          AS milestone_tx
+       FROM loans l
+       JOIN  users u ON u.id = l.borrower_id
+       LEFT JOIN kyc_documents k ON k.user_id = l.borrower_id
+       LEFT JOIN milestones m ON m.loan_id = l.id
+       WHERE l.lender_id = ?
+         AND l.status IN ('APPROVED','ACTIVE','COMPLETED','DEFAULTED')
+       ORDER BY l.approved_at DESC, m.stage ASC`,
+      [req.user.id]
+    );
+
+    // Group milestones by loan
+    const loanMap = {};
+    for (const row of rows) {
+      if (!loanMap[row.id]) {
+        const { milestone_stage, milestone_pct, milestone_status, milestone_tx, ...loanData } = row;
+        loanMap[row.id] = { ...loanData, milestones: [] };
+      }
+      if (row.milestone_stage) {
+        loanMap[row.id].milestones.push({
+          stage: row.milestone_stage,
+          pct: row.milestone_pct,
+          status: row.milestone_status,
+          tx_hash: row.milestone_tx,
+        });
+      }
     }
 
-    res.json({ success: true, loans });
+    res.json({ success: true, loans: Object.values(loanMap) });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── GET /api/loans/all ─────────────────────────────────
+// ── GET /api/loans/all ────────────────────────────────────
 router.get("/all", protect, authorize("admin", "government", "auditor"), async (req, res) => {
   try {
     const pool = getPool();
-    const [loans] = await pool.execute(`
-      SELECT l.*, u.name AS borrower_name, u.wallet_address AS borrower_wallet,
-             lu.name AS lender_name
-      FROM loans l
-      JOIN users u ON u.id = l.borrower_id
-      LEFT JOIN users lu ON lu.id = l.lender_id
-      ORDER BY l.applied_at DESC
-    `);
+    const [loans] = await pool.execute(
+      `SELECT l.*,
+              u.name AS borrower_name, u.email AS borrower_email,
+              u.wallet_address AS borrower_wallet,
+              k.business_name, k.annual_turnover, k.gst_number
+       FROM loans l
+       JOIN  users u ON u.id = l.borrower_id
+       LEFT JOIN kyc_documents k ON k.user_id = l.borrower_id
+       ORDER BY l.applied_at DESC`
+    );
     res.json({ success: true, loans });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ── GET /api/loans/:id ────────────────────────────────
+// ── GET /api/loans/:id ────────────────────────────────────
 router.get("/:id", protect, async (req, res) => {
   try {
     const pool = getPool();
-    const [loans] = await pool.execute(`
-      SELECT l.*, u.name AS borrower_name, u.wallet_address AS borrower_wallet,
-             lu.name AS lender_name, lu.wallet_address AS lender_wallet
-      FROM loans l
-      JOIN users u ON u.id = l.borrower_id
-      LEFT JOIN users lu ON lu.id = l.lender_id
-      WHERE l.id = ?
-    `, [req.params.id]);
-
+    const [loans] = await pool.execute(
+      `SELECT l.*,
+              u.name AS borrower_name, u.email AS borrower_email,
+              u.wallet_address AS borrower_wallet
+       FROM loans l
+       JOIN users u ON u.id = l.borrower_id
+       WHERE l.id=?`,
+      [req.params.id]
+    );
     if (!loans.length) {
       return res.status(404).json({ success: false, message: "Loan not found" });
     }
@@ -250,10 +296,12 @@ router.get("/:id", protect, async (req, res) => {
     const loan = loans[0];
 
     const [milestones] = await pool.execute(
-      "SELECT * FROM milestones WHERE loan_id=? ORDER BY stage", [loan.id]
+      "SELECT * FROM milestones WHERE loan_id=? ORDER BY stage",
+      [loan.id]
     );
     const [repayments] = await pool.execute(
-      "SELECT * FROM repayments WHERE loan_id=? ORDER BY installment_no", [loan.id]
+      "SELECT * FROM repayments WHERE loan_id=? ORDER BY installment_no",
+      [loan.id]
     );
 
     res.json({ success: true, loan: { ...loan, milestones, repayments } });
@@ -262,29 +310,34 @@ router.get("/:id", protect, async (req, res) => {
   }
 });
 
-// ── POST /api/loans/:id/approve ───────────────────────
+// ── POST /api/loans/:id/approve ───────────────────────────
 router.post("/:id/approve", protect, authorize("lender"), async (req, res) => {
   try {
     const pool = getPool();
-    const [loans] = await pool.execute("SELECT * FROM loans WHERE id=?", [req.params.id]);
-    if (!loans.length) return res.status(404).json({ success: false, message: "Loan not found" });
-
-    const loan = loans[0];
-    if (loan.status !== "PENDING") {
+    const [loans] = await pool.execute(
+      "SELECT * FROM loans WHERE id=?",
+      [req.params.id]
+    );
+    if (!loans.length) {
+      return res.status(404).json({ success: false, message: "Loan not found" });
+    }
+    if (loans[0].status !== "PENDING") {
       return res.status(400).json({ success: false, message: "Loan is not pending" });
     }
 
     const { txHash } = req.body;
 
-    await pool.execute(`
-      UPDATE loans SET status='APPROVED', lender_id=?, approved_at=NOW(), tx_hash_approved=?
-      WHERE id=?
-    `, [req.user.id, txHash, req.params.id]);
+    await pool.execute(
+      "UPDATE loans SET status='APPROVED', lender_id=?, approved_at=NOW(), tx_hash_approved=? WHERE id=?",
+      [req.user.id, txHash || null, req.params.id]
+    );
 
-    await pool.execute(`
-      INSERT INTO audit_logs (loan_id, actor_wallet, action, details, tx_hash)
-      VALUES (?,?,'LOAN_APPROVED',?,?)
-    `, [loan.id, req.user.wallet_address, JSON.stringify({ lenderId: req.user.id }), txHash]);
+    await pool.execute(
+      `INSERT INTO audit_logs (loan_id, actor_wallet, action, details, tx_hash)
+       VALUES (?, ?, 'LOAN_APPROVED', ?, ?)`,
+      [req.params.id, req.user.wallet_address,
+       JSON.stringify({ loanId: req.params.id }), txHash || null]
+    );
 
     res.json({ success: true, message: "Loan approved successfully" });
   } catch (err) {
@@ -292,19 +345,23 @@ router.post("/:id/approve", protect, authorize("lender"), async (req, res) => {
   }
 });
 
-// ── POST /api/loans/:id/reject ────────────────────────
+// ── POST /api/loans/:id/reject ────────────────────────────
 router.post("/:id/reject", protect, authorize("lender", "admin"), async (req, res) => {
   try {
     const { reason, txHash } = req.body;
     const pool = getPool();
-    await pool.execute(`
-      UPDATE loans SET status='REJECTED', reject_reason=?, tx_hash_rejected=? WHERE id=?
-    `, [reason || "Rejected by lender", txHash, req.params.id]);
 
-    await pool.execute(`
-      INSERT INTO audit_logs (loan_id, actor_wallet, action, details, tx_hash)
-      VALUES (?,?,'LOAN_REJECTED',?,?)
-    `, [req.params.id, req.user.wallet_address, JSON.stringify({ reason }), txHash]);
+    await pool.execute(
+      "UPDATE loans SET status='REJECTED', reject_reason=?, tx_hash_approved=? WHERE id=?",
+      [reason || "Rejected by lender", txHash || null, req.params.id]
+    );
+
+    await pool.execute(
+      `INSERT INTO audit_logs (loan_id, actor_wallet, action, details, tx_hash)
+       VALUES (?, ?, 'LOAN_REJECTED', ?, ?)`,
+      [req.params.id, req.user.wallet_address,
+       JSON.stringify({ reason }), txHash || null]
+    );
 
     res.json({ success: true, message: "Loan rejected" });
   } catch (err) {
