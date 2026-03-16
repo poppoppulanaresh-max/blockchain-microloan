@@ -373,21 +373,19 @@ export function Login() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   KYC SUBMIT  (fixed: status-check on load, validation, step advance)
+   KYC SUBMIT
 ═══════════════════════════════════════════════════════════════════ */
 export function KYCSubmit() {
   const [form, setForm] = useState({ businessName: "", gstNumber: "", aadhaarNumber: "", panNumber: "", businessType: "", annualTurnover: "" });
-  const [submitted, setSubmitted] = useState(null); // { msg, txHash }
-  const [kycStatus, setKycStatus] = useState(null); // existing status from server
+  const [submitted, setSubmitted] = useState(null);
+  const [kycStatus, setKycStatus] = useState(null);
+  const [kycDoc, setKycDoc] = useState(null); // FIX: was missing, caused no-undef on lines 401/405/409
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(true);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState({});
 
-  // FIX: load KYC status on mount
-  // CRITICAL FIX: only treat as "pending" if a kyc_documents row actually exists
-  // Railway MySQL default is 'pending' for brand new users who never submitted anything
   useEffect(() => {
     (async () => {
       try {
@@ -409,7 +407,6 @@ export function KYCSubmit() {
           setKycDoc(res.data.document);
           setStep(1);
         } else {
-          // new user with default pending but no doc submitted yet — show form
           setKycStatus(null);
           setStep(1);
         }
@@ -418,7 +415,6 @@ export function KYCSubmit() {
     })();
   }, []);
 
-  // FIX: client-side validation
   const validate = () => {
     const GST_RE = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
     const PAN_RE = /^[A-Z]{5}[0-9]{4}[A-Z]{1}$/;
@@ -444,7 +440,7 @@ export function KYCSubmit() {
       const res = await api.post("/api/kyc/submit", form);
       setSubmitted({ msg: res.data.message, txHash: res.data.txHash });
       setKycStatus("pending");
-      setStep(2); // FIX: advance stepper on success
+      setStep(2);
     } catch (err) {
       setError(err.response?.data?.message || "Submission failed");
     } finally {
@@ -455,7 +451,6 @@ export function KYCSubmit() {
   const f = (k, v) => { setForm((p) => ({ ...p, [k]: v })); setFieldErrors((p) => ({ ...p, [k]: undefined })); };
   const s = styles;
 
-  // Step tab indicator
   const stepLabels = ["Business Info", "On-Chain Hash", "Verification"];
   const StepTabs = () => (
     <div style={{ display: "flex", gap: 8, marginBottom: 24 }}>
@@ -484,7 +479,6 @@ export function KYCSubmit() {
 
         <StepTabs />
 
-        {/* Already verified */}
         {kycStatus === "verified" && !submitted && (
           <div style={s.success}>
             <p style={{ fontWeight: 700 }}>✅ KYC Already Verified</p>
@@ -493,7 +487,6 @@ export function KYCSubmit() {
           </div>
         )}
 
-        {/* Already pending */}
         {kycStatus === "pending" && !submitted && (
           <div style={s.warning}>
             <p style={{ fontWeight: 700 }}>⏳ KYC Under Review</p>
@@ -502,7 +495,6 @@ export function KYCSubmit() {
           </div>
         )}
 
-        {/* Success after fresh submit */}
         {submitted && (
           <div style={s.success}>
             <p style={{ fontWeight: 700 }}>✅ {submitted.msg}</p>
@@ -517,7 +509,6 @@ export function KYCSubmit() {
           </div>
         )}
 
-        {/* Show form only if not yet submitted */}
         {kycStatus !== "verified" && kycStatus !== "pending" && !submitted && (
           <>
             <div style={{ ...s.infoBox, marginBottom: 20 }}>
@@ -738,7 +729,6 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
       <Navbar user={user} onLogout={logout} />
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "28px 20px" }}>
 
-        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
           <div>
             <h1 style={{ ...s.title, color: "#00d4ff", marginBottom: 4 }}>Welcome, {user?.name} 👋</h1>
@@ -759,7 +749,6 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
           </div>
         </div>
 
-        {/* KYC Warning */}
         {user?.kyc_status !== "verified" && (
           <div style={{ ...s.warning, marginBottom: 20 }}>
             ⚠ Your KYC is {user?.kyc_status === "pending" ? "pending admin verification" : "not submitted yet"}.{" "}
@@ -767,7 +756,6 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
           </div>
         )}
 
-        {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 12, marginBottom: 28 }}>
           <StatCard label="TOTAL LOANS" value={stats.total} color="#00d4ff" icon="📋" />
           <StatCard label="ACTIVE" value={stats.active} color="#00ff9f" icon="✅" />
@@ -775,7 +763,6 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
           <StatCard label="COMPLETED" value={stats.completed} color="#a78bfa" icon="🏆" />
         </div>
 
-        {/* Active loan summary */}
         {loans.filter(l => l.status === "ACTIVE").length > 0 && (
           <>
             <h2 style={s.sectionTitle}>🔥 Active Loans — Action Required</h2>
@@ -798,7 +785,6 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
           </>
         )}
 
-        {/* All loans */}
         <h2 style={s.sectionTitle}>All Loan Applications</h2>
         {isLoading ? (
           <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading blockchain data...</p>
@@ -833,7 +819,6 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
           </div>
         )}
 
-        {/* How to guide */}
         <div style={{ ...s.infoBox, marginTop: 28 }}>
           <p style={{ fontWeight: 700, color: "#c8e0f4", marginBottom: 8 }}>📌 How to Get Your Loan Funded:</p>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
@@ -886,7 +871,6 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
       <Navbar user={user} onLogout={logout} />
       <div style={{ maxWidth: 960, margin: "0 auto", padding: "28px 20px" }}>
 
-        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
           <div>
             <h1 style={{ ...s.title, color: "#00ff9f", marginBottom: 4 }}>Lender Dashboard</h1>
@@ -899,7 +883,6 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
           {!connected && <button onClick={connectWallet} style={{ ...s.connectBtn, borderColor: "#00ff9f", color: "#00ff9f" }}>🦊 Connect Wallet to Approve Loans</button>}
         </div>
 
-        {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 12, marginBottom: 28 }}>
           <StatCard label="PENDING REVIEW" value={stats.pending} color="#ffd32a" icon="⏳" sub="Awaiting your decision" />
           <StatCard label="APPROVED" value={stats.approved} color="#00d4ff" icon="✅" />
@@ -907,7 +890,6 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
           <StatCard label="COMPLETED" value={stats.completed} color="#a78bfa" icon="🏆" sub="Fully repaid" />
         </div>
 
-        {/* Pending loans to review */}
         <h2 style={{ ...s.sectionTitle, color: "#ffd32a" }}>⚡ Pending Loan Requests — Action Required</h2>
         {isLoading ? (
           <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading...</p>
@@ -921,7 +903,6 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
           </div>
         )}
 
-        {/* My approved loans */}
         <h2 style={{ ...s.sectionTitle, color: "#00ff9f" }}>💰 My Investments</h2>
         {myApprovedLoans.length === 0 ? (
           <div style={s.empty}><p>You haven't approved any loans yet.</p></div>
@@ -1036,10 +1017,9 @@ function AuditorDashboard({ user, logout }) {
   const [recentLoans, setRecentLoans] = useState([]);
   const [stats, setStats] = useState({});
   const [isLoading, setIsLoading] = useState(true);
-  const [actionLoadingId, setActionLoadingId] = useState(null); // FIX: per-button loading
+  const [actionLoadingId, setActionLoadingId] = useState(null);
   const s = styles;
 
-  // FIX: extracted so we can re-call after verify/reject without page reload
   const fetchData = async () => {
     setIsLoading(true);
     try {
@@ -1056,14 +1036,12 @@ function AuditorDashboard({ user, logout }) {
 
   useEffect(() => { fetchData(); }, []);
 
-  // FIX: no window.location.reload — just re-fetch and remove item from list
   const handleKYC = async (userId, status) => {
     if (!window.confirm(`${status === "verified" ? "Verify" : "Reject"} this KYC submission?`)) return;
     setActionLoadingId(userId);
     try {
       const api = (await import("../utils/api")).default;
       await api.post(`/api/kyc/verify/${userId}`, { status });
-      // Remove from list immediately for instant feedback, then re-fetch stats
       setPendingKYC((prev) => prev.filter((u) => u.id !== userId));
       setStats((prev) => ({ ...prev, pending_kyc: Math.max(0, (prev.pending_kyc || 0) - 1) }));
     } catch (e) {
@@ -1078,14 +1056,12 @@ function AuditorDashboard({ user, logout }) {
       <Navbar user={user} onLogout={logout} />
       <div style={{ maxWidth: 1000, margin: "0 auto", padding: "28px 20px" }}>
 
-        {/* Header */}
         <div style={{ marginBottom: 28 }}>
           <h1 style={{ ...s.title, color: "#a78bfa", marginBottom: 4 }}>Auditor Dashboard</h1>
           <p style={{ color: "#4a7090", fontSize: 13, fontFamily: "monospace" }}>Welcome, {user?.name} — KYC & Compliance Officer</p>
           <span style={{ ...s.tag, color: "#a78bfa", borderColor: "#a78bfa" }}>AUDITOR</span>
         </div>
 
-        {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 12, marginBottom: 28 }}>
           <StatCard label="PENDING KYC" value={pendingKYC.length} color="#ffd32a" icon="📋" sub="Requires your review" />
           <StatCard label="TOTAL LOANS" value={stats.total_loans} color="#a78bfa" icon="📊" />
@@ -1093,7 +1069,6 @@ function AuditorDashboard({ user, logout }) {
           <StatCard label="REJECTED" value={stats.rejected} color="#ff4757" icon="❌" />
         </div>
 
-        {/* Pending KYC — primary action */}
         <h2 style={{ ...s.sectionTitle, color: "#ffd32a" }}>⚠️ Pending KYC Verifications ({pendingKYC.length})</h2>
         {isLoading ? (
           <p style={{ color: "#4a7090", fontFamily: "monospace" }}>Loading...</p>
@@ -1126,7 +1101,6 @@ function AuditorDashboard({ user, logout }) {
           ))
         )}
 
-        {/* Recent loan activity */}
         <h2 style={{ ...s.sectionTitle, color: "#a78bfa" }}>📊 Recent Loan Activity</h2>
         {recentLoans.length === 0 ? (
           <div style={s.empty}><p>No loan activity yet.</p></div>
@@ -1193,7 +1167,6 @@ function GovernmentDashboard({ user, logout }) {
       <Navbar user={user} onLogout={logout} />
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "28px 20px" }}>
 
-        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 28 }}>
           <div>
             <h1 style={{ ...s.title, color: "#ffd32a", marginBottom: 4 }}>Government Dashboard</h1>
@@ -1205,7 +1178,6 @@ function GovernmentDashboard({ user, logout }) {
           </div>
         </div>
 
-        {/* Stats */}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px,1fr))", gap: 12, marginBottom: 28 }}>
           <StatCard label="TOTAL LOANS" value={stats.total_loans} color="#ffd32a" icon="📋" />
           <StatCard label="PENDING" value={stats.pending} color="#4a7090" icon="⏳" />
@@ -1215,7 +1187,6 @@ function GovernmentDashboard({ user, logout }) {
           <StatCard label="DEFAULTED" value={stats.defaulted} color="#ff4757" icon="⚠️" />
         </div>
 
-        {/* Tabs */}
         <div style={{ display: "flex", gap: 4, marginBottom: 24 }}>
           {tabs.map((tab) => (
             <button key={tab} onClick={() => setActiveTab(tab)} style={{ ...s.smallBtn, borderColor: activeTab === tab ? "#ffd32a" : "#1a3a5c", color: activeTab === tab ? "#ffd32a" : "#4a7090", background: activeTab === tab ? "rgba(255,211,42,0.08)" : "transparent", textTransform: "uppercase", letterSpacing: 1, fontSize: 11 }}>
@@ -1224,7 +1195,6 @@ function GovernmentDashboard({ user, logout }) {
           ))}
         </div>
 
-        {/* Overview Tab */}
         {activeTab === "overview" && (
           <div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
@@ -1268,7 +1238,6 @@ function GovernmentDashboard({ user, logout }) {
           </div>
         )}
 
-        {/* All Loans Tab */}
         {activeTab === "all loans" && (
           <div>
             <h2 style={{ ...s.sectionTitle, color: "#ffd32a" }}>All Loan Applications ({allLoans.length})</h2>
@@ -1295,7 +1264,6 @@ function GovernmentDashboard({ user, logout }) {
           </div>
         )}
 
-        {/* Audit Trail Tab */}
         {activeTab === "audit trail" && (
           <div>
             <h2 style={{ ...s.sectionTitle, color: "#ffd32a" }}>Immutable Audit Trail ({logs.length} records)</h2>
@@ -1323,7 +1291,6 @@ function GovernmentDashboard({ user, logout }) {
           </div>
         )}
 
-        {/* System Tab */}
         {activeTab === "system" && (
           <div style={s.infoBox}>
             <p style={{ fontWeight: 700, color: "#ffd32a", marginBottom: 12, fontSize: 14 }}>⛓ System Information</p>
@@ -1514,12 +1481,11 @@ function LenderPendingList() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   ADMIN PANEL  (fixed: admin role now gets AuditorDashboard with full KYC controls)
+   ADMIN PANEL
 ═══════════════════════════════════════════════════════════════════ */
 export function AdminPanel() {
   const { user, logout } = useAuth();
   if (!user) return null;
-  // admin and auditor both need KYC verify/reject capability → AuditorDashboard
   if (user.role === "admin")   return <AuditorDashboard user={user} logout={logout} />;
   if (user.role === "auditor") return <AuditorDashboard user={user} logout={logout} />;
   return <GovernmentDashboard user={user} logout={logout} />;
