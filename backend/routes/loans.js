@@ -68,8 +68,11 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
 
     const creditScore = await calculateCreditScore(req.user.id, amountWei, pool);
 
-    // Relaxed threshold for demo/showcase flows
-    const MIN_CREDIT_SCORE = Number(process.env.MIN_CREDIT_SCORE || 400);
+    // NOTE: On-chain contract enforces MIN_SCORE=500 for approval.
+    // If backend allows lower scores, lenders will hit a revert when approving on-chain.
+    const MIN_CREDIT_SCORE = Number(process.env.MIN_CREDIT_SCORE || 500);
+    const CHAIN_MIN_SCORE = 500;
+    const EFFECTIVE_MIN_SCORE = Math.max(MIN_CREDIT_SCORE, CHAIN_MIN_SCORE);
 
     const { Web3 } = require("web3");
     const web3 = new Web3();
@@ -80,10 +83,10 @@ router.post("/apply", protect, authorize("borrower"), async (req, res) => {
       { type: "uint256", value: String(amountWei) }
     );
 
-    const initialStatus = creditScore < MIN_CREDIT_SCORE ? "REJECTED" : "PENDING";
+    const initialStatus = creditScore < EFFECTIVE_MIN_SCORE ? "REJECTED" : "PENDING";
     const rejectReason =
-      creditScore < MIN_CREDIT_SCORE
-        ? `Credit score below minimum threshold (${MIN_CREDIT_SCORE})`
+      creditScore < EFFECTIVE_MIN_SCORE
+        ? `Credit score below minimum threshold (${EFFECTIVE_MIN_SCORE})`
         : null;
 
     const [result] = await pool.execute(

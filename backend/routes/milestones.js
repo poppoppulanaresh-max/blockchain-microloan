@@ -77,7 +77,7 @@ router.post("/:loanId/verify", protect, authorize("admin","lender"), async (req,
 
     // Calculate release amount
     const amountWei  = BigInt(loans[0].amount_wei);
-    const pct        = BigInt(milestones[0].release_percent);
+    const pct        = BigInt(milestones[0].pct ?? milestones[0].release_percent);
     const releaseAmt = ((amountWei * pct) / 100n).toString();
 
     await pool.execute(`

@@ -105,7 +105,7 @@ async function initSchema() {
         id               INT AUTO_INCREMENT PRIMARY KEY,
         loan_id          INT          NOT NULL,
         stage            INT          NOT NULL COMMENT '1-4',
-        release_percent  INT          NOT NULL COMMENT '20,30,30,20',
+        pct              INT          NOT NULL COMMENT '20,30,30,20',
         proof_hash       VARCHAR(66)  COMMENT 'IPFS hash or document hash',
         bill_description TEXT,
         status           ENUM('PENDING','SUBMITTED','RELEASED') DEFAULT 'PENDING',
@@ -116,6 +116,27 @@ async function initSchema() {
         FOREIGN KEY (loan_id) REFERENCES loans(id)
       )
     `);
+
+    // Backward‑compatible migration for older schemas:
+    // - add pct column if missing
+    // - if legacy release_percent exists, copy values into pct
+    try {
+      await conn.execute(`ALTER TABLE milestones ADD COLUMN pct INT NULL AFTER stage`);
+    } catch (e) {
+      if (!e || e.code !== "ER_DUP_FIELDNAME") throw e;
+    }
+    try {
+      // If legacy column exists, copy its values into pct where pct is null
+      await conn.execute(`
+        UPDATE milestones
+        SET pct = release_percent
+        WHERE pct IS NULL
+      `);
+    } catch (_) {
+      // Ignore if legacy column doesn't exist
+    }
+    // Ensure pct is non-null for new rows
+    await conn.execute(`UPDATE milestones SET pct = 0 WHERE pct IS NULL`);
 
     // ── Repayment Schedule ──────────────────────────
     await conn.execute(`
