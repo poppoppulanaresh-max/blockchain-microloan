@@ -4,6 +4,12 @@ const { protect, authorize } = require("../middleware/auth");
 const { getPool } = require("../config/db");
 const { setCreditScoreOnChain, getLoanStatusFromChain } = require("../config/blockchain");
 
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
 // ── Credit Score Engine ───────────────────────────────────
 async function calculateCreditScore(borrowerId, loanAmount, pool) {
   const [kyc] = await pool.execute(
@@ -381,6 +387,100 @@ router.post("/:id/reject", protect, authorize("lender", "admin"), async (req, re
     );
 
     res.json({ success: true, message: "Loan rejected" });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// ── POST /api/loans/:id/funded ───────────────────────────
+// Called after lender deposits funds on-chain.
+// Syncs DB: sets loan ACTIVE, marks milestone-1 released, and creates repayment schedule.
+router.post("/:id/funded", protect, authorize("lender"), async (req, res) => {
+  try {
+    const { txHash } = req.body;
+    const pool = getPool();
+
+    const [rows] = await pool.execute(
+      "SELECT * FROM loans WHERE id=?",
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, message: "Loan not found" });
+
+    const loan = rows[0];
+    if (loan.lender_id !== req.user.id) {
+      return res.status(403).json({ success: false, message: "Not your loan" });
+    }
+    if (!["APPROVED", "ACTIVE"].includes(loan.status)) {
+      return res.status(400).json({ success: false, message: `Loan must be APPROVED to fund (current: ${loan.status})` });
+    }
+
+    // Mark loan ACTIVE
+    await pool.execute(
+      "UPDATE loans SET status='ACTIVE' WHERE id=?",
+      [req.params.id]
+    );
+
+    // Ensure milestones exist (idempotent)
+    const [ms] = await pool.execute("SELECT COUNT(*) AS c FROM milestones WHERE loan_id=?", [req.params.id]);
+    if (Number(ms[0].c) === 0) {
+      const milestones = [
+        { stage: 1, pct: 20 },
+        { stage: 2, pct: 30 },
+        { stage: 3, pct: 30 },
+        { stage: 4, pct: 20 },
+      ];
+      for (const m of milestones) {
+        await pool.execute(
+          "INSERT INTO milestones (loan_id, stage, pct, status) VALUES (?,?,?,'PENDING')",
+          [req.params.id, m.stage, m.pct]
+        );
+      }
+    }
+
+    // Mark milestone-1 as released (contract auto-releases 20% on depositFunds)
+    try {
+      const amountWei = BigInt(loan.amount_wei);
+      const released1 = ((amountWei * 20n) / 100n).toString();
+      await pool.execute(
+        `UPDATE milestones
+         SET status='RELEASED', released_at=NOW(), amount_released=?, tx_hash=?
+         WHERE loan_id=? AND stage=1`,
+        [released1, txHash || null, req.params.id]
+      );
+    } catch (_) {
+      // non-fatal
+    }
+
+    // Create repayment schedule if missing (idempotent)
+    const [rep] = await pool.execute("SELECT COUNT(*) AS c FROM repayments WHERE loan_id=?", [req.params.id]);
+    if (Number(rep[0].c) === 0) {
+      const principal = BigInt(loan.amount_wei);
+      const tenureMonths = Number(loan.tenure_months || 12);
+      const interestRate = BigInt(loan.interest_rate || 1200); // annual rate * 100
+
+      // Match solidity logic:
+      // monthly = (principal * interestRate) / (100*100*12)
+      // emi     = (principal / tenureMonths) + monthly
+      const monthlyInterest = (principal * interestRate) / 1200000n;
+      const base = principal / BigInt(tenureMonths);
+      const emi = (base + monthlyInterest).toString();
+
+      for (let i = 0; i < tenureMonths; i++) {
+        const due = addDays(new Date(), (i + 1) * 30);
+        await pool.execute(
+          "INSERT INTO repayments (loan_id, installment_no, emi_amount_wei, due_date, paid) VALUES (?,?,?,?,FALSE)",
+          [req.params.id, i, emi, due]
+        );
+      }
+    }
+
+    await pool.execute(
+      `INSERT INTO audit_logs (loan_id, actor_wallet, action, details, tx_hash)
+       VALUES (?, ?, 'FUNDS_DEPOSITED', ?, ?)`,
+      [req.params.id, req.user.wallet_address, JSON.stringify({ loanId: req.params.id }), txHash || null]
+    );
+
+    res.json({ success: true, message: "Loan marked ACTIVE and repayments initialized" });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

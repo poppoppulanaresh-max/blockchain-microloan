@@ -1046,7 +1046,13 @@ function LenderLoanCard({ loan }) {
       const api = (await import("../utils/api")).default;
       await api.post(`/api/loans/${loan.id}/approve`, { txHash: receipt.hash || receipt.transactionHash });
       alert("Loan approved! Automatically depositing funds...");
-      await depositFundsOnChain(toBytes32(loan.loan_id_hash), window.BigInt(loan.amount_wei));
+      const depositReceipt = await depositFundsOnChain(toBytes32(loan.loan_id_hash), window.BigInt(loan.amount_wei));
+      try {
+        await api.post(`/api/loans/${loan.id}/funded`, { txHash: depositReceipt?.hash || depositReceipt?.transactionHash });
+      } catch (e) {
+        // If DB sync fails, still show success since funds are on-chain.
+        console.error(e);
+      }
       alert("✅ Done! Funds deposited.");
       window.location.reload();
     } catch (err) { alert(err.message); }
