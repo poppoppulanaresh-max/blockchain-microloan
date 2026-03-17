@@ -1005,7 +1005,7 @@ function LenderLoanCard({ loan }) {
       const api = (await import("../utils/api")).default;
       await api.post(`/api/loans/${loan.id}/approve`, { txHash: receipt.hash || receipt.transactionHash });
       const shouldDeposit = window.confirm("Loan approved! Deposit funds now? (Releases 20% to borrower)");
-      if (shouldDeposit) await depositFundsOnChain(toBytes32(loan.loan_id_hash), BigInt(loan.amount_wei));
+      if (shouldDeposit) await depositFundsOnChain(toBytes32(loan.loan_id_hash), window.BigInt(loan.amount_wei));
       alert("✅ Done!");
       window.location.reload();
     } catch (err) { alert(err.message); }
@@ -1454,7 +1454,7 @@ export function LoanDetail() {
     }
     try {
       // emi_amount_wei comes from DB as a string - must convert to BigInt for the contract
-      const amountWeiBN = BigInt(amountWei);
+      const amountWeiBN = window.BigInt(amountWei);
       const receipt = await makeRepaymentOnChain(toBytes32(loan.loan_id_hash), installment, amountWeiBN);
       const api = (await import("../utils/api")).default;
       await api.post(`/api/repayments/${id}/record`, { installmentNo: installment, txHash: receipt.hash || receipt.transactionHash, amountPaidWei: amountWei.toString() });
