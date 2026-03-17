@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useWeb3 } from "../context/Web3Context";
 
@@ -748,6 +748,7 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
   const [loans, setLoans] = useState([]);
   const [stats, setStats] = useState({ total: 0, active: 0, completed: 0, pending: 0 });
   const [isLoading, setIsLoading] = useState(true);
+  const navigate = useNavigate();
   const s = styles;
 
   useEffect(() => {
@@ -822,7 +823,20 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
                       Tenure: {loan.tenure_months}m · Score: <span style={{ color: "#00ff9f" }}>{loan.credit_score}</span> · Click to submit milestone proofs
                     </p>
                   </div>
-                  <span style={{ color: "#00ff9f", fontSize: 20 }}>›</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        navigate(`/loans/${loan.id}#repayments`);
+                      }}
+                      style={{ ...s.smallBtn, borderColor: "#00ff9f", color: "#00ff9f" }}
+                    >
+                      Pay Now
+                    </button>
+                    <span style={{ color: "#00ff9f", fontSize: 20 }}>›</span>
+                  </div>
                 </div>
               </Link>
             ))}
@@ -856,7 +870,24 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
                       <span style={{ color: "#4a7090", fontSize: 12 }}>Tenure: {loan.tenure_months}m</span>
                     </div>
                   </div>
-                  <span style={{ color: "#4a7090", fontSize: 18 }}>›</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    {loan.status === "ACTIVE" ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          navigate(`/loans/${loan.id}#repayments`);
+                        }}
+                        style={{ ...s.smallBtn, borderColor: "#00ff9f", color: "#00ff9f" }}
+                      >
+                        Pay Now
+                      </button>
+                    ) : (
+                      <span style={{ color: "#4a7090", fontSize: 12 }}>Pay when ACTIVE</span>
+                    )}
+                    <span style={{ color: "#4a7090", fontSize: 18 }}>›</span>
+                  </div>
                 </div>
               </Link>
             ))}
@@ -1076,7 +1107,6 @@ function AuditorDashboard({ user, logout }) {
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [seedLoading, setSeedLoading] = useState(false);
-  const { connected, account, connectWallet, verifyKYCOnChain, rejectKYCOnChain } = useWeb3();
   const s = styles;
 
   const fetchData = async () => {
@@ -1125,29 +1155,13 @@ function AuditorDashboard({ user, logout }) {
 
   const handleKYC = async (userId, status) => {
     if (!window.confirm(`${status === "verified" ? "Verify" : "Reject"} this KYC submission?`)) return;
-    // Require wallet to be connected for on-chain action
-    if (!connected || !account) {
-      alert("Please connect your MetaMask wallet to perform on-chain KYC actions.");
-      try { await connectWallet(); } catch (_) {}
-      return;
-    }
     setActionLoadingId(userId);
     try {
       const api = (await import("../utils/api")).default;
-      const targetUser = pendingKYC.find(u => u.id === userId);
-      const walletAddr = targetUser?.wallet_address;
-      let txHash = null;
-      // Step 1: on-chain action
-      if (walletAddr) {
-        const receipt = status === "verified"
-          ? await verifyKYCOnChain(walletAddr)
-          : await rejectKYCOnChain(walletAddr, "Rejected by auditor");
-        txHash = receipt?.hash || receipt?.transactionHash;
-      }
-      // Step 2: update backend
-      await api.post(`/api/kyc/verify/${userId}`, { status, txHash, auditorAddress: account });
-      setPendingKYC((prev) => prev.filter((u) => u.id !== userId));
-      setStats((prev) => ({ ...prev, pending_kyc: Math.max(0, (prev.pending_kyc || 0) - 1) }));
+      // Perform verification via backend (DB update + best-effort on-chain sync using admin key).
+      // This avoids MetaMask role/revert issues that can freeze the auditor UI.
+      await api.post(`/api/kyc/verify/${userId}`, { status });
+      await fetchData();
     } catch (e) {
       const msg = e?.reason || e?.data?.message || e?.response?.data?.message || e.message || "Failed to update KYC";
       alert(msg);
@@ -1431,6 +1445,7 @@ function GovernmentDashboard({ user, logout }) {
 ═══════════════════════════════════════════════════════════════════ */
 export function LoanDetail() {
   const { id } = useParams();
+  const location = useLocation();
   const [loan, setLoan] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const { makeRepaymentOnChain, connected, connectWallet } = useWeb3();
@@ -1446,6 +1461,13 @@ export function LoanDetail() {
     };
     fetchLoan();
   }, [id]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (!location.hash) return;
+    const el = document.getElementById(location.hash.replace("#", ""));
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [location.hash, isLoading]);
 
   const handleSubmitProof = async (stage) => {
     const billDesc = prompt(`Describe Stage ${stage} bill/invoice:`);
@@ -1537,9 +1559,14 @@ export function LoanDetail() {
             </div>
           ))}
         </div>
+        {user?.role === "borrower" && loan.status === "APPROVED" && (
+          <div style={{ ...s.warning, marginTop: 16 }}>
+            ⚠ Your loan is approved, but repayments start only after the lender deposits funds (loan becomes ACTIVE).
+          </div>
+        )}
         {loan.repayments?.length > 0 && (
           <>
-            <h2 style={s.sectionTitle}>Repayment Schedule</h2>
+            <h2 id="repayments" style={s.sectionTitle}>Repayment Schedule</h2>
             <div style={{ ...s.card, padding: 0, overflow: "hidden", margin: 0 }}>
               <table style={s.table}>
                 <thead><tr>{["#", "Due Date", "Amount (Wei)", "Status", "Action"].map(h => <th key={h} style={s.th}>{h}</th>)}</tr></thead>
@@ -1570,6 +1597,9 @@ export function LoanDetail() {
                               Pay EMI
                             </button>
                           </div>
+                        )}
+                        {!r.paid && user?.role === "borrower" && loan.status !== "ACTIVE" && (
+                          <span style={{ color: "#4a7090", fontSize: 12 }}>Enabled when ACTIVE</span>
                         )}
                       </td>
                     </tr>
