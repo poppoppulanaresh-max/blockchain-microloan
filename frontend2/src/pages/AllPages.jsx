@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useWeb3 } from "../context/Web3Context";
@@ -829,7 +829,7 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        navigate(`/loans/${loan.id}#repayments`);
+                        navigate(`/loans/${loan.id}?payNow=1#repayments`);
                       }}
                       style={{ ...s.smallBtn, borderColor: "#00ff9f", color: "#00ff9f" }}
                     >
@@ -877,7 +877,7 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          navigate(`/loans/${loan.id}#repayments`);
+                          navigate(`/loans/${loan.id}?payNow=1#repayments`);
                         }}
                         style={{ ...s.smallBtn, borderColor: "#00ff9f", color: "#00ff9f" }}
                       >
@@ -1456,6 +1456,7 @@ export function LoanDetail() {
   const [isLoading, setIsLoading] = useState(true);
   const { makeRepaymentOnChain, connected, connectWallet } = useWeb3();
   const { user } = useAuth();
+  const autoPayDone = useRef(false);
 
   useEffect(() => {
     const fetchLoan = async () => {
@@ -1486,7 +1487,11 @@ export function LoanDetail() {
     } catch (err) { alert(err.response?.data?.message || err.message); }
   };
 
-  const handleRepay = async (installment, amountWei) => {
+  const handleRepay = useCallback(async (installment, amountWei) => {
+    if (!loan?.loan_id_hash) {
+      alert("Loan details not loaded yet. Please try again.");
+      return;
+    }
     if (!connected) {
       try { await connectWallet(); } catch (_) {}
       if (!connected) return alert("Please connect MetaMask first");
@@ -1500,7 +1505,37 @@ export function LoanDetail() {
       alert("✅ Repayment successful!");
       window.location.reload();
     } catch (err) { alert(err.message); }
-  };
+  }, [loan?.loan_id_hash, connected, connectWallet, makeRepaymentOnChain, id]);
+
+  useEffect(() => {
+    if (autoPayDone.current) return;
+    if (isLoading || !loan) return;
+
+    const params = new URLSearchParams(location.search || "");
+    if (params.get("payNow") !== "1") return;
+    if (user?.role !== "borrower") return;
+
+    autoPayDone.current = true;
+
+    if (loan.status !== "ACTIVE") {
+      alert("Repayment is enabled only after the loan is ACTIVE (funded by lender).");
+      return;
+    }
+
+    const next = (loan.repayments || []).find((r) => !r.paid);
+    if (!next) {
+      alert("No pending repayments found.");
+      return;
+    }
+
+    const ok = window.confirm(
+      `This will open MetaMask to pay your next EMI to the lender.\n\nInstallment: ${next.installment_no}\nAmount (wei): ${next.emi_amount_wei}\n\nContinue?`
+    );
+    if (!ok) return;
+
+    // Trigger MetaMask transaction (repayment on-chain)
+    handleRepay(next.installment_no, next.emi_amount_wei);
+  }, [location.search, isLoading, loan, user, handleRepay]);
 
   const s = styles;
   const MILESTONE_LABELS = ["Stage 1 (20%) — Auto on Approval", "Stage 2 (30%) — Bill 1 Submission", "Stage 3 (30%) — Bill 2 Submission", "Stage 4 (20%) — Final Proof"];
