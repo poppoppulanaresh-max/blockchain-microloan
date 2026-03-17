@@ -32,12 +32,12 @@ export function Web3Provider({ children }) {
   const initContracts = useCallback(async (ethSigner) => {
     const loan = new ethers.Contract(
       contractAddresses.MicroLoanContract,
-      MicroLoanABI,
+      MicroLoanABI.abi,
       ethSigner
     );
     const kyc = new ethers.Contract(
       contractAddresses.KYCRegistry,
-      KYCRegistryABI,
+      KYCRegistryABI.abi,
       ethSigner
     );
     setLoanContract(loan);
@@ -153,18 +153,42 @@ export function Web3Provider({ children }) {
   };
 
   // ─── Guard ────────────────────────────────────────────────────────────────────
-  function ensureWalletConnected() {
-    if (!connected || !loanContract) {
-      throw new Error("MetaMask wallet not connected.");
-    }
+  async function ensureWalletConnectedAsync() {
+    if (connected && loanContract) return;
+    if (!window.ethereum) throw new Error("MetaMask wallet not connected.");
+    
+    // Check if we can connect seamlessly or just wait for setup
+    const ethProvider = new ethers.BrowserProvider(window.ethereum);
+    const ethSigner = await ethProvider.getSigner();
+    
+    // Wire immediately
+    const loan = new ethers.Contract(
+      contractAddresses.MicroLoanContract,
+      MicroLoanABI.abi,
+      ethSigner
+    );
+    const kyc = new ethers.Contract(
+      contractAddresses.KYCRegistry,
+      KYCRegistryABI.abi,
+      ethSigner
+    );
+    
+    setProvider(ethProvider);
+    setSigner(ethSigner);
+    setLoanContract(loan);
+    setKycContract(kyc);
+    setConnected(true);
+    
+    return { loan, kyc };
   }
 
   // ─── Contract helpers ─────────────────────────────────────────────────────────
 
   async function applyLoanOnChain(amountWei, interestRate, tenureMonths, collateral) {
-    ensureWalletConnected();
+    const instance = await ensureWalletConnectedAsync();
+    const currentLoan = instance?.loan || loanContract;
     // interestRate must be a plain integer (e.g. 10 for 10%) — fixes PCT field error
-    const tx = await loanContract.applyForLoan(
+    const tx = await currentLoan.applyForLoan(
       amountWei,
       Number(interestRate),   // ensure it's a number, not a string
       Number(tenureMonths),
@@ -174,46 +198,53 @@ export function Web3Provider({ children }) {
   }
 
   async function approveLoanOnChain(loanIdHash) {
-    ensureWalletConnected();
-    const tx = await loanContract.approveLoan(loanIdHash);
+    const instance = await ensureWalletConnectedAsync();
+    const currentLoan = instance?.loan || loanContract;
+    const tx = await currentLoan.approveLoan(loanIdHash);
     return tx.wait();
   }
 
   async function rejectLoanOnChain(loanIdHash, reason) {
-    ensureWalletConnected();
-    const tx = await loanContract.rejectLoan(loanIdHash, reason);
+    const instance = await ensureWalletConnectedAsync();
+    const currentLoan = instance?.loan || loanContract;
+    const tx = await currentLoan.rejectLoan(loanIdHash, reason);
     return tx.wait();
   }
 
   async function depositFundsOnChain(loanIdHash, amountWei) {
-    ensureWalletConnected();
-    const tx = await loanContract.depositFunds(loanIdHash, { value: amountWei });
+    const instance = await ensureWalletConnectedAsync();
+    const currentLoan = instance?.loan || loanContract;
+    const tx = await currentLoan.depositFunds(loanIdHash, { value: amountWei });
     return tx.wait();
   }
 
   async function submitMilestoneProof(loanIdHash, milestoneIndex, proofHash) {
-    ensureWalletConnected();
-    const tx = await loanContract.submitMilestoneProof(loanIdHash, milestoneIndex, proofHash);
+    const instance = await ensureWalletConnectedAsync();
+    const currentLoan = instance?.loan || loanContract;
+    const tx = await currentLoan.submitMilestoneProof(loanIdHash, milestoneIndex, proofHash);
     return tx.wait();
   }
 
   async function makeRepaymentOnChain(loanIdHash, installment, amountWei) {
-    ensureWalletConnected();
-    const tx = await loanContract.makeRepayment(loanIdHash, installment, { value: amountWei });
+    const instance = await ensureWalletConnectedAsync();
+    const currentLoan = instance?.loan || loanContract;
+    const tx = await currentLoan.makeRepayment(loanIdHash, installment, { value: amountWei });
     return tx.wait();
   }
 
   // ─── KYC helpers (used by auditor verify) ────────────────────────────────────
 
   async function verifyKYCOnChain(userAddress) {
-    ensureWalletConnected();
-    const tx = await kycContract.verifyKYC(userAddress);
+    const instance = await ensureWalletConnectedAsync();
+    const currentKyc = instance?.kyc || kycContract;
+    const tx = await currentKyc.verifyKYC(userAddress);
     return tx.wait();
   }
 
   async function rejectKYCOnChain(userAddress, reason) {
-    ensureWalletConnected();
-    const tx = await kycContract.rejectKYC(userAddress, reason);
+    const instance = await ensureWalletConnectedAsync();
+    const currentKyc = instance?.kyc || kycContract;
+    const tx = await currentKyc.rejectKYC(userAddress, reason);
     return tx.wait();
   }
 

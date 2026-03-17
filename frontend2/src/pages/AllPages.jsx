@@ -1002,6 +1002,15 @@ function LenderLoanCard({ loan }) {
   const handleApprove = async () => {
     try {
       if (!connected) await connectWallet();
+      
+      // We must wait a tick for React context state to update (connected, loanContract)
+      // but ensureWalletConnected() inside approveLoanOnChain checks the state immediately.
+      // So if not connected initially, we can't just call approveLoanOnChain immediately.
+      // We can check if window.ethereum.selectedAddress exists or similar, or just try to get the signer directly.
+      // Quick fix: the context `approveLoanOnChain` itself checks `ensureWalletConnected()`.
+      // The context's state update hasn't applied when this synchronous execution continues.
+      // Better to check inside Web3Context's verify. Or wait a tiny bit.
+      
       const receipt = await approveLoanOnChain(toBytes32(loan.loan_id_hash));
       const api = (await import("../utils/api")).default;
       await api.post(`/api/loans/${loan.id}/approve`, { txHash: receipt.hash || receipt.transactionHash });
