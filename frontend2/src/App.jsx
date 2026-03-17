@@ -2,7 +2,6 @@ import React from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Web3Provider } from "./context/Web3Context";
-import Navbar from "./components/Navbar";
 
 import {
   Login,
@@ -120,10 +119,6 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <Web3Provider>
-
-          {/* Navbar added here */}
-          <Navbar />
-
           <AppRoutes />
 
         </Web3Provider>

@@ -27,7 +27,7 @@ export function AuthProvider({ children }) {
     localStorage.setItem("token", res.data.token);
     setUser({
       ...res.data.user,
-      kyc_status: res.data.user.kycStatus || res.data.user.kyc_status || "pending",
+      kyc_status: res.data.user.kycStatus || res.data.user.kyc_status || "rejected",
     });
     return res.data;
   };
@@ -38,7 +38,7 @@ export function AuthProvider({ children }) {
     localStorage.setItem("token", res.data.token);
     setUser({
       ...res.data.user,
-      kyc_status: res.data.user.kycStatus || res.data.user.kyc_status || "pending",
+      kyc_status: res.data.user.kycStatus || res.data.user.kyc_status || "rejected",
     });
     return res.data;
   };

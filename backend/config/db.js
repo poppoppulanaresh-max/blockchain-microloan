@@ -37,11 +37,22 @@ async function initSchema() {
         email         VARCHAR(100) NOT NULL UNIQUE,
         password_hash VARCHAR(255) NOT NULL,
         role          ENUM('borrower','lender','admin','auditor','government') DEFAULT 'borrower',
-        kyc_status    ENUM('pending','verified','rejected') DEFAULT 'pending',
+        kyc_status    ENUM('pending','verified','rejected') DEFAULT 'rejected',
         created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
+
+    // Backward‑compatible migration:
+    // - fix wrong default kyc_status ('pending' made new users look "under review" before submission)
+    try {
+      await conn.execute(`
+        ALTER TABLE users
+        MODIFY COLUMN kyc_status ENUM('pending','verified','rejected') DEFAULT 'rejected'
+      `);
+    } catch (e) {
+      // ignore if not supported by provider / already correct
+    }
 
     // ── KYC Documents (off-chain sensitive data) ────
     await conn.execute(`

@@ -242,6 +242,22 @@ router.get("/pending", protect, authorize("admin", "auditor", "government"), asy
       "UPDATE kyc_documents SET submitted_at = NOW() WHERE submitted_at IS NULL"
     );
 
+    const statusFilter = req.query.status;
+    // Default: show ONLY real submissions that are pending verification.
+    // Require a doc_hash so "new users with default status" never show up here.
+    let whereClause = "WHERE u.kyc_status = 'pending' AND k.doc_hash IS NOT NULL";
+    let queryParams = [limit, offset];
+    let countParams = [];
+
+    if (statusFilter && statusFilter !== 'all') {
+      whereClause = "WHERE u.kyc_status = ? AND k.doc_hash IS NOT NULL";
+      queryParams = [statusFilter, limit, offset];
+      countParams = [statusFilter];
+    } else if (statusFilter === 'all') {
+      // Still require doc_hash so only actual submissions appear
+      whereClause = "WHERE u.kyc_status IN ('pending', 'verified', 'rejected') AND k.doc_hash IS NOT NULL";
+    }
+
     // LEFT JOIN so users with pending status but missing kyc_doc row still appear
     const [rows] = await pool.execute(
       `SELECT
@@ -260,14 +276,18 @@ router.get("/pending", protect, authorize("admin", "auditor", "government"), asy
          k.submitted_at
        FROM users u
        LEFT JOIN kyc_documents k ON k.user_id = u.id
-       WHERE u.kyc_status = 'pending'
+       ${whereClause}
        ORDER BY COALESCE(k.submitted_at, u.created_at) DESC
        LIMIT ? OFFSET ?`,
-      [limit, offset]
+      queryParams
     );
 
     const [[{ total }]] = await pool.execute(
-      "SELECT COUNT(*) AS total FROM users WHERE kyc_status='pending'"
+      `SELECT COUNT(*) AS total
+       FROM users u
+       LEFT JOIN kyc_documents k ON k.user_id = u.id
+       ${whereClause}`,
+      countParams
     );
 
     res.json({ success: true, pending: rows, total, page, limit });

@@ -95,7 +95,7 @@ router.post("/:loanId/verify", protect, authorize("admin","lender"), async (req,
       );
       if (Number(all[0].c) === 0) {
         await pool.execute(
-          "UPDATE loans SET status='ACTIVE' WHERE id=?", [req.params.loanId]
+          "UPDATE loans SET status='COMPLETED' WHERE id=?", [req.params.loanId]
         );
       }
     }

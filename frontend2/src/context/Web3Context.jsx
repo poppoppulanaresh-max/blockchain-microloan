@@ -237,14 +237,14 @@ export function Web3Provider({ children }) {
   async function verifyKYCOnChain(userAddress) {
     const instance = await ensureWalletConnectedAsync();
     const currentKyc = instance?.kyc || kycContract;
-    const tx = await currentKyc.verifyKYC(userAddress);
+    const tx = await currentKyc.verifyKYC(userAddress, true);
     return tx.wait();
   }
 
   async function rejectKYCOnChain(userAddress, reason) {
     const instance = await ensureWalletConnectedAsync();
     const currentKyc = instance?.kyc || kycContract;
-    const tx = await currentKyc.rejectKYC(userAddress, reason);
+    const tx = await currentKyc.verifyKYC(userAddress, false);
     return tx.wait();
   }
 

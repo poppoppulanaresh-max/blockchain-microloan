@@ -1519,6 +1519,19 @@ export function LoanDetail() {
                   {user?.role === "borrower" && m.status === "PENDING" && i > 0 && loan.status === "ACTIVE" && (
                     <button onClick={() => handleSubmitProof(m.stage)} style={s.smallBtn}>Submit Proof</button>
                   )}
+                  {user?.role === "lender" && m.status === "SUBMITTED" && loan.status === "ACTIVE" && (
+                    <button onClick={async () => {
+                      if (!window.confirm(`Verify and release stage ${m.stage} funds?`)) return;
+                      try {
+                        const api = (await import("../utils/api")).default;
+                        await api.post(`/api/milestones/${id}/verify`, { stage: m.stage });
+                        alert(`Stage ${m.stage} verified and funds released!`);
+                        window.location.reload();
+                      } catch (err) {
+                        alert(err.response?.data?.message || err.message);
+                      }
+                    }} style={{ ...s.smallBtn, borderColor: "#00ff9f", color: "#00ff9f" }}>Verify & Release</button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1539,7 +1552,24 @@ export function LoanDetail() {
                       <td style={s.td}><StatusBadge status={r.paid ? "PAID" : "PENDING"} /></td>
                       <td style={s.td}>
                         {!r.paid && user?.role === "borrower" && loan.status === "ACTIVE" && (
-                          <button onClick={() => handleRepay(r.installment_no, r.emi_amount_wei)} style={s.smallBtn}>Pay EMI</button>
+                          <div style={{ display: "flex", gap: "8px" }}>
+                            <input
+                              type="number"
+                              id={`repay-amt-${i}`}
+                              style={{ ...s.input, width: "100px", padding: "4px" }}
+                              placeholder={r.emi_amount_wei}
+                              defaultValue={r.emi_amount_wei}
+                            />
+                            <button
+                              onClick={() => {
+                                const val = document.getElementById(`repay-amt-${i}`).value;
+                                handleRepay(r.installment_no, val || r.emi_amount_wei);
+                              }}
+                              style={s.smallBtn}
+                            >
+                              Pay EMI
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
