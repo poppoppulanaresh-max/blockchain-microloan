@@ -585,7 +585,7 @@ export function KYCSubmit() {
 ═══════════════════════════════════════════════════════════════════ */
 export function ApplyLoan() {
   const { user: applyUser, logout: applyLogout } = useAuth();
-  const [form, setForm] = useState({ amountEth: "", tenureMonths: "12", collateral: "", purpose: "" });
+  const [form, setForm] = useState({ amountEth: "", interestRate: "12", tenureMonths: "12", collateral: "", purpose: "" });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -605,10 +605,7 @@ export function ApplyLoan() {
       const { ethers } = await import("ethers");
       const api = (await import("../utils/api")).default;
       const amountWei = ethers.parseEther(form.amountEth);
-      // Fix: interestRate was hardcoded as 1200 (basis points). Backend/contract expects
-      // a plain integer percentage (e.g. 12 for 12%). Renamed from ambiguous "pct" to
-      // interestRate and passed as correct integer — fixes the PCT field error.
-      const interestRate = 12; // 12% p.a. — matches the EMI calculator below
+      const interestRate = parseInt(form.interestRate, 10);
       const tenureMonths = Number(form.tenureMonths);
       // Step 1: submit on-chain (uses applyLoanOnChain from Web3Context destructured above)
       const receipt = await applyLoanOnChain(
@@ -639,7 +636,7 @@ export function ApplyLoan() {
   const s = styles;
   const ethAmt = parseFloat(form.amountEth) || 0;
   const months = parseInt(form.tenureMonths) || 12;
-  const rate = 0.12 / 12;
+  const rate = (parseInt(form.interestRate || "12", 10) / 100) / 12;
   const emi = ethAmt > 0 ? ((ethAmt * rate * Math.pow(1 + rate, months)) / (Math.pow(1 + rate, months) - 1)).toFixed(6) : "—";
 
   return (
@@ -696,11 +693,15 @@ export function ApplyLoan() {
                 <input style={s.input} type="number" step="0.001" required placeholder="e.g. 0.1" value={form.amountEth} onChange={(e) => f("amountEth", e.target.value)} />
               </div>
               <div style={s.field}>
-                <label style={s.label}>Tenure (Months)</label>
-                <select style={s.input} value={form.tenureMonths} onChange={(e) => f("tenureMonths", e.target.value)}>
-                  {[6, 12, 18, 24, 36].map((m) => (<option key={m} value={m}>{m} months</option>))}
-                </select>
+                <label style={s.label}>Interest Rate (%)</label>
+                <input style={s.input} type="number" step="1" required placeholder="e.g. 12" value={form.interestRate} onChange={(e) => f("interestRate", e.target.value)} />
               </div>
+            </div>
+            <div style={s.field}>
+              <label style={s.label}>Tenure (Months)</label>
+              <select style={s.input} value={form.tenureMonths} onChange={(e) => f("tenureMonths", e.target.value)}>
+                {[6, 12, 18, 24, 36].map((m) => (<option key={m} value={m}>{m} months</option>))}
+              </select>
             </div>
             <div style={s.field}>
               <label style={s.label}>Collateral Description</label>
@@ -714,7 +715,7 @@ export function ApplyLoan() {
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
                   <span>Interest Rate</span>
-                  <span style={{ color: "#ffd32a", fontFamily: "monospace" }}>12% p.a.</span>
+                  <span style={{ color: "#ffd32a", fontFamily: "monospace" }}>{form.interestRate}% p.a.</span>
                 </div>
               </div>
             )}
@@ -994,19 +995,19 @@ function LenderDashboard({ user, logout, account, connectWallet, connected }) {
 const toBytes32 = (hash) => (hash && !hash.startsWith("0x") ? `0x${hash}` : hash);
 
 function LenderLoanCard({ loan }) {
-  const { approveLoanOnChain, rejectLoanOnChain, depositFundsOnChain, connected } = useWeb3();
+  const { approveLoanOnChain, rejectLoanOnChain, depositFundsOnChain, connected, connectWallet } = useWeb3();
   const s = styles;
   const scoreColor = (score) => score >= 700 ? "#00ff9f" : score >= 500 ? "#ffd32a" : "#ff4757";
 
   const handleApprove = async () => {
-    if (!connected) return alert("Connect MetaMask first");
     try {
+      if (!connected) await connectWallet();
       const receipt = await approveLoanOnChain(toBytes32(loan.loan_id_hash));
       const api = (await import("../utils/api")).default;
       await api.post(`/api/loans/${loan.id}/approve`, { txHash: receipt.hash || receipt.transactionHash });
-      const shouldDeposit = window.confirm("Loan approved! Deposit funds now? (Releases 20% to borrower)");
-      if (shouldDeposit) await depositFundsOnChain(toBytes32(loan.loan_id_hash), window.BigInt(loan.amount_wei));
-      alert("✅ Done!");
+      alert("Loan approved! Automatically depositing funds...");
+      await depositFundsOnChain(toBytes32(loan.loan_id_hash), window.BigInt(loan.amount_wei));
+      alert("✅ Done! Funds deposited.");
       window.location.reload();
     } catch (err) { alert(err.message); }
   };
@@ -1015,6 +1016,7 @@ function LenderLoanCard({ loan }) {
     const reason = prompt("Reason for rejection:");
     if (!reason) return;
     try {
+      if (!connected) await connectWallet();
       await rejectLoanOnChain(toBytes32(loan.loan_id_hash), reason);
       const api = (await import("../utils/api")).default;
       await api.post(`/api/loans/${loan.id}/reject`, { reason });

@@ -16,6 +16,8 @@ import {
   AuditLogs,
 } from "./pages/AllPages";
 
+import AuditorKYC from "./pages/AuditorKYC";
+
 function PrivateRoute({ children, roles }) {
   const { user, loading } = useAuth();
 
@@ -95,6 +97,15 @@ function AppRoutes() {
         element={
           <PrivateRoute roles={["auditor", "government"]}>
             <AuditLogs />
+          </PrivateRoute>
+        }
+      />
+
+      <Route
+        path="/kyc-verify"
+        element={
+          <PrivateRoute roles={["auditor"]}>
+            <AuditorKYC />
           </PrivateRoute>
         }
       />

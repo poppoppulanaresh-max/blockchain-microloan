@@ -12,7 +12,8 @@ const STATUS_COLOR = { 0: "#ffb74d", 1: "#00ff9f", 2: "#ff4757" };
 
 export default function AuditorKYC() {
   const { connected, account, connectWallet, verifyKYCOnChain, rejectKYCOnChain, loading: web3Loading } = useWeb3();
-  const { user, token } = useAuth();
+  const { user } = useAuth();
+  const token = localStorage.getItem("token");
 
   const [submissions, setSubmissions] = useState([]);
   const [loadingList, setLoadingList] = useState(false);
