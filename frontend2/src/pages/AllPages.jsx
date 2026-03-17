@@ -149,7 +149,7 @@ function Navbar({ user, onLogout }) {
         {user?.role === "auditor" && (
           <>
             <Link to="/dashboard" style={s.navLink}>Dashboard</Link>
-            <Link to="/admin" style={s.navLink}>KYC Verify</Link>
+            <Link to="/kyc-verify" style={s.navLink}>KYC Verify</Link>
             <Link to="/audit" style={s.navLink}>Audit Logs</Link>
           </>
         )}
@@ -240,14 +240,16 @@ export function Register() {
   const { account, connectWallet, connected } = useWeb3();
   const navigate = useNavigate();
 
-  const handleConnect = async () => {
-    await connectWallet();
+  // Sync wallet address into form whenever account state updates (async after connectWallet)
+  useEffect(() => {
     if (account) setForm((p) => ({ ...p, walletAddress: account }));
-  };
+  }, [account]);
+
+  const handleConnect = async () => { await connectWallet(); };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!account) return setError("Please connect your MetaMask wallet first");
+    if (!connected || !account) return setError("Please connect your MetaMask wallet first");
     setLoading(true);
     setError("");
     try {
@@ -323,8 +325,11 @@ export function Login() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, user } = useAuth();
   const navigate = useNavigate();
+
+  // Redirect if already logged in
+  useEffect(() => { if (user) navigate("/dashboard", { replace: true }); }, [user, navigate]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -376,6 +381,7 @@ export function Login() {
    KYC SUBMIT
 ═══════════════════════════════════════════════════════════════════ */
 export function KYCSubmit() {
+  const { user: kycUser, logout: kycLogout } = useAuth();
   const [form, setForm] = useState({ businessName: "", gstNumber: "", aadhaarNumber: "", panNumber: "", businessType: "", annualTurnover: "" });
   const [submitted, setSubmitted] = useState(null);
   const [kycStatus, setKycStatus] = useState(null);
@@ -473,6 +479,7 @@ export function KYCSubmit() {
 
   return (
     <div style={s.page}>
+      <Navbar user={kycUser} onLogout={kycLogout} />
       <div style={{ ...s.card, maxWidth: 540 }}>
         <h2 style={s.title}>KYC Verification</h2>
         <p style={{ ...s.subtitle, marginBottom: 6 }}>Step {step} of 3 — {["Identity Verification", "On-Chain Hash Stored", "Verification Complete"][step - 1]}</p>
@@ -577,26 +584,48 @@ export function KYCSubmit() {
    APPLY LOAN
 ═══════════════════════════════════════════════════════════════════ */
 export function ApplyLoan() {
+  const { user: applyUser, logout: applyLogout } = useAuth();
   const [form, setForm] = useState({ amountEth: "", tenureMonths: "12", collateral: "", purpose: "" });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const { connected, loading: web3Loading, account, connectWallet } = useWeb3();
+  const { connected, loading: web3Loading, account, connectWallet, applyLoanOnChain } = useWeb3();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (web3Loading) return setError("Checking wallet connection… please try again in a second.");
-    if (!account) return setError("Connect MetaMask first");
+    // Fix: check connected flag AND account, not just account (account can be stale)
+    if (!connected) {
+      try { await connectWallet(); } catch (_) {}
+    }
+    if (!connected || !account) return setError("Please connect MetaMask first");
     setLoading(true);
     setError("");
     try {
       const { ethers } = await import("ethers");
       const api = (await import("../utils/api")).default;
-      const amountWei = ethers.parseEther(form.amountEth).toString();
+      const amountWei = ethers.parseEther(form.amountEth);
+      // Fix: interestRate was hardcoded as 1200 (basis points). Backend/contract expects
+      // a plain integer percentage (e.g. 12 for 12%). Renamed from ambiguous "pct" to
+      // interestRate and passed as correct integer — fixes the PCT field error.
+      const interestRate = 12; // 12% p.a. — matches the EMI calculator below
+      const tenureMonths = Number(form.tenureMonths);
+      // Step 1: submit on-chain (uses applyLoanOnChain from Web3Context destructured above)
+      const receipt = await applyLoanOnChain(
+        amountWei,
+        interestRate,
+        tenureMonths,
+        form.collateral || "none"
+      );
+      // Step 2: persist to backend
       const res = await api.post("/api/loans/apply", {
-        amountWei, interestRate: 1200,
-        tenureMonths: Number(form.tenureMonths),
-        collateral: form.collateral, purpose: form.purpose,
+        amountWei: amountWei.toString(),
+        interestRate,          // correct field name, correct type
+        tenureMonths,
+        collateral: form.collateral,
+        purpose: form.purpose,
+        walletAddress: account,
+        txHash: receipt?.hash || receipt?.transactionHash,
       });
       setResult(res.data);
     } catch (err) {
@@ -615,6 +644,7 @@ export function ApplyLoan() {
 
   return (
     <div style={s.page}>
+      <Navbar user={applyUser} onLogout={applyLogout} />
       <div style={{ ...s.card, maxWidth: 540 }}>
         <h2 style={s.title}>Apply for Loan</h2>
         <p style={s.subtitle}>MSME Blockchain-Backed Microloan</p>
@@ -973,9 +1003,9 @@ function LenderLoanCard({ loan }) {
     try {
       const receipt = await approveLoanOnChain(toBytes32(loan.loan_id_hash));
       const api = (await import("../utils/api")).default;
-      await api.post(`/api/loans/${loan.id}/approve`, { txHash: receipt.hash });
+      await api.post(`/api/loans/${loan.id}/approve`, { txHash: receipt.hash || receipt.transactionHash });
       const shouldDeposit = window.confirm("Loan approved! Deposit funds now? (Releases 20% to borrower)");
-      if (shouldDeposit) await depositFundsOnChain(toBytes32(loan.loan_id_hash), loan.amount_wei);
+      if (shouldDeposit) await depositFundsOnChain(toBytes32(loan.loan_id_hash), BigInt(loan.amount_wei));
       alert("✅ Done!");
       window.location.reload();
     } catch (err) { alert(err.message); }
@@ -1035,6 +1065,7 @@ function AuditorDashboard({ user, logout }) {
   const [isLoading, setIsLoading] = useState(true);
   const [actionLoadingId, setActionLoadingId] = useState(null);
   const [seedLoading, setSeedLoading] = useState(false);
+  const { connected, account, connectWallet, verifyKYCOnChain, rejectKYCOnChain } = useWeb3();
   const s = styles;
 
   const fetchData = async () => {
@@ -1083,14 +1114,32 @@ function AuditorDashboard({ user, logout }) {
 
   const handleKYC = async (userId, status) => {
     if (!window.confirm(`${status === "verified" ? "Verify" : "Reject"} this KYC submission?`)) return;
+    // Require wallet to be connected for on-chain action
+    if (!connected || !account) {
+      alert("Please connect your MetaMask wallet to perform on-chain KYC actions.");
+      try { await connectWallet(); } catch (_) {}
+      return;
+    }
     setActionLoadingId(userId);
     try {
       const api = (await import("../utils/api")).default;
-      await api.post(`/api/kyc/verify/${userId}`, { status });
+      const targetUser = pendingKYC.find(u => u.id === userId);
+      const walletAddr = targetUser?.wallet_address;
+      let txHash = null;
+      // Step 1: on-chain action
+      if (walletAddr) {
+        const receipt = status === "verified"
+          ? await verifyKYCOnChain(walletAddr)
+          : await rejectKYCOnChain(walletAddr, "Rejected by auditor");
+        txHash = receipt?.hash || receipt?.transactionHash;
+      }
+      // Step 2: update backend
+      await api.post(`/api/kyc/verify/${userId}`, { status, txHash, auditorAddress: account });
       setPendingKYC((prev) => prev.filter((u) => u.id !== userId));
       setStats((prev) => ({ ...prev, pending_kyc: Math.max(0, (prev.pending_kyc || 0) - 1) }));
     } catch (e) {
-      alert(e.response?.data?.message || "Failed to update KYC");
+      const msg = e?.reason || e?.data?.message || e?.response?.data?.message || e.message || "Failed to update KYC";
+      alert(msg);
     } finally {
       setActionLoadingId(null);
     }
@@ -1373,7 +1422,7 @@ export function LoanDetail() {
   const { id } = useParams();
   const [loan, setLoan] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const { makeRepaymentOnChain, connected } = useWeb3();
+  const { makeRepaymentOnChain, connected, connectWallet } = useWeb3();
   const { user } = useAuth();
 
   useEffect(() => {
@@ -1399,11 +1448,16 @@ export function LoanDetail() {
   };
 
   const handleRepay = async (installment, amountWei) => {
-    if (!connected) return alert("Connect MetaMask first");
+    if (!connected) {
+      try { await connectWallet(); } catch (_) {}
+      if (!connected) return alert("Please connect MetaMask first");
+    }
     try {
-      const receipt = await makeRepaymentOnChain(toBytes32(loan.loan_id_hash), installment, amountWei);
+      // emi_amount_wei comes from DB as a string - must convert to BigInt for the contract
+      const amountWeiBN = BigInt(amountWei);
+      const receipt = await makeRepaymentOnChain(toBytes32(loan.loan_id_hash), installment, amountWeiBN);
       const api = (await import("../utils/api")).default;
-      await api.post(`/api/repayments/${id}/record`, { installmentNo: installment, txHash: receipt.hash, amountPaidWei: amountWei });
+      await api.post(`/api/repayments/${id}/record`, { installmentNo: installment, txHash: receipt.hash || receipt.transactionHash, amountPaidWei: amountWei.toString() });
       alert("✅ Repayment successful!");
       window.location.reload();
     } catch (err) { alert(err.message); }
@@ -1417,6 +1471,7 @@ export function LoanDetail() {
 
   return (
     <div style={s.page}>
+      <Navbar user={user} onLogout={() => {}} />
       <div style={{ maxWidth: 860, margin: "0 auto", padding: "28px 20px" }}>
         <Link to="/dashboard" style={{ color: "#4a7090", fontSize: 13, textDecoration: "none" }}>← Back to Dashboard</Link>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, marginBottom: 24 }}>

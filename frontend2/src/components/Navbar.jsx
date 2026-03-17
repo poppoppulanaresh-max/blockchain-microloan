@@ -30,9 +30,9 @@ export default function Navbar() {
       { to: "/audit",      label: "Audit Logs" }
     ],
     auditor: [
-      { to: "/dashboard",  label: "Dashboard" },
-      { to: "/admin",      label: "KYC Verify" },
-      { to: "/audit",      label: "Audit Logs" }
+      { to: "/dashboard",    label: "Dashboard" },
+      { to: "/kyc-verify",   label: "KYC Verify" },
+      { to: "/audit",        label: "Audit Logs" }
     ],
     government: [
       { to: "/dashboard",  label: "Dashboard" },
