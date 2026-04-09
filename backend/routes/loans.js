@@ -155,12 +155,43 @@ router.get("/my", protect, async (req, res) => {
   try {
     const pool = getPool();
 
-    const result = await pool.query(
+    const loansRes = await pool.query(
       "SELECT * FROM loans WHERE borrower_id=$1 ORDER BY applied_at DESC",
       [req.user.id]
     );
 
-    res.json({ success: true, loans: result.rows });
+    const loanIds = loansRes.rows.map((r) => r.id);
+
+    let milestonesByLoan = {};
+    let repaymentsByLoan = {};
+
+    if (loanIds.length) {
+      const mRes = await pool.query(
+        `SELECT * FROM milestones WHERE loan_id = ANY($1::int[]) ORDER BY loan_id, stage`,
+        [loanIds]
+      );
+      milestonesByLoan = mRes.rows.reduce((acc, m) => {
+        (acc[m.loan_id] ||= []).push(m);
+        return acc;
+      }, {});
+
+      const rRes = await pool.query(
+        `SELECT * FROM repayments WHERE loan_id = ANY($1::int[]) ORDER BY loan_id, installment_no NULLS LAST, due_date NULLS LAST, id`,
+        [loanIds]
+      );
+      repaymentsByLoan = rRes.rows.reduce((acc, r) => {
+        (acc[r.loan_id] ||= []).push(r);
+        return acc;
+      }, {});
+    }
+
+    const loans = loansRes.rows.map((l) => ({
+      ...l,
+      milestones: milestonesByLoan[l.id] || [],
+      repayments: repaymentsByLoan[l.id] || [],
+    }));
+
+    res.json({ success: true, loans });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -308,6 +339,16 @@ router.post("/:id/funded", protect, authorize("lender"), async (req, res) => {
       "UPDATE loans SET status='ACTIVE', funded_at=CURRENT_TIMESTAMP WHERE id=$1",
       [req.params.id]
     );
+
+    // Auto-release milestone stage 1 (so borrower immediately sees some funds released by default)
+    try {
+      await pool.query(
+        `UPDATE milestones
+         SET status='RELEASED', tx_hash=$1, released_at=CURRENT_TIMESTAMP
+         WHERE loan_id=$2 AND stage=1 AND status <> 'RELEASED'`,
+        [req.body?.txHash || null, req.params.id]
+      );
+    } catch {}
 
     // Create repayment schedule if not existing
     const existingRepay = await pool.query("SELECT COUNT(*)::int AS c FROM repayments WHERE loan_id=$1", [req.params.id]);

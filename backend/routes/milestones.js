@@ -7,14 +7,17 @@ const router = Router();
 
 router.post("/:loanId/submit", protect, authorize("borrower"), async (req, res) => {
   try {
-    const { stage, billDescription } = req.body;
+    const { stage, billDescription, proofHash } = req.body;
     const pool = getPool();
 
-    const proofHash = crypto.createHash("sha256").update(billDescription).digest("hex");
+    const computed =
+      typeof proofHash === "string" && /^[0-9a-fA-F]{64}$/.test(proofHash)
+        ? proofHash.toLowerCase()
+        : crypto.createHash("sha256").update(String(billDescription || "")).digest("hex");
 
     await pool.query(
       "UPDATE milestones SET status='SUBMITTED', proof_hash=$1, bill_description=$2 WHERE loan_id=$3 AND stage=$4",
-      [proofHash, billDescription, req.params.loanId, stage]
+      [computed, billDescription, req.params.loanId, stage]
     );
 
     try {

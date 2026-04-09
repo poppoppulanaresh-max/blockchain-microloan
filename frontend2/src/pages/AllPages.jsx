@@ -773,6 +773,11 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
   const navigate = useNavigate();
   const s = styles;
 
+  const releasedPct = (milestones = []) => {
+    const weights = [20, 30, 30, 20];
+    return milestones.reduce((acc, m, i) => acc + (m.status === "RELEASED" ? (weights[i] || 0) : 0), 0);
+  };
+
   useEffect(() => {
     const fetchLoans = async () => {
       try {
@@ -790,6 +795,17 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
     };
     fetchLoans();
   }, []);
+
+  const activeLoans = loans.filter((l) => l.status === "ACTIVE");
+  const totalReleasedWei = activeLoans.reduce((acc, l) => {
+    const pct = releasedPct(l.milestones || []);
+    const amt = Number(l.amount_wei || 0);
+    return acc + (amt * pct / 100);
+  }, 0);
+  const nextDueCount = activeLoans.reduce((acc, l) => {
+    const next = (l.repayments || []).find((r) => !r.paid);
+    return acc + (next ? 1 : 0);
+  }, 0);
 
   return (
     <div style={s.page}>
@@ -828,6 +844,20 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
           <StatCard label="ACTIVE" value={stats.active} color="#00ff9f" icon="✅" />
           <StatCard label="PENDING" value={stats.pending} color="#ffd32a" icon="⏳" />
           <StatCard label="COMPLETED" value={stats.completed} color="#a78bfa" icon="🏆" />
+          <StatCard
+            label="FUNDS RELEASED"
+            value={activeLoans.length ? `${Math.round(totalReleasedWei)} wei` : 0}
+            color="#00ff9f"
+            icon="💸"
+            sub={activeLoans.length ? `Across ${activeLoans.length} active loan(s)` : "Available after lender deposits"}
+          />
+          <StatCard
+            label="NEXT EMI DUE"
+            value={nextDueCount}
+            color="#ffd32a"
+            icon="🧾"
+            sub="Tap Pay Now on an ACTIVE loan"
+          />
         </div>
 
         {loans.filter(l => l.status === "ACTIVE").length > 0 && (
@@ -840,6 +870,9 @@ function BorrowerDashboard({ user, logout, account, connectWallet, connected }) 
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                       <p style={{ fontWeight: 700, color: "#00ff9f" }}>Loan #{loan.id}</p>
                       <StatusBadge status={loan.status} />
+                      <span style={{ ...s.tag, borderColor: "#00ff9f", color: "#00ff9f" }}>
+                        Released: {releasedPct(loan.milestones || [])}%
+                      </span>
                     </div>
                     <p style={{ color: "#4a7090", fontSize: 12 }}>
                       Tenure: {loan.tenure_months}m · Score: <span style={{ color: "#00ff9f" }}>{loan.credit_score}</span> · Click to submit milestone proofs
@@ -1479,6 +1512,9 @@ export function LoanDetail() {
   const { makeRepaymentOnChain, connected, connectWallet } = useWeb3();
   const { user } = useAuth();
   const autoPayDone = useRef(false);
+  const [proofModal, setProofModal] = useState({ open: false, stage: null });
+  const [proofForm, setProofForm] = useState({ billDescription: "", file: null, fileHash: "" });
+  const [proofLoading, setProofLoading] = useState(false);
 
   useEffect(() => {
     const fetchLoan = async () => {
@@ -1498,15 +1534,45 @@ export function LoanDetail() {
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }, [location.hash, isLoading]);
 
-  const handleSubmitProof = async (stage) => {
-    const billDesc = prompt(`Describe Stage ${stage} bill/invoice:`);
-    if (!billDesc) return;
+  const openProofModal = (stage) => {
+    setProofForm({ billDescription: "", file: null, fileHash: "" });
+    setProofModal({ open: true, stage });
+  };
+
+  const computeFileHash = async (file) => {
+    if (!file) return "";
+    const buf = await file.arrayBuffer();
+    const digest = await window.crypto.subtle.digest("SHA-256", buf);
+    const hashArray = Array.from(new Uint8Array(digest));
+    return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+  };
+
+  const submitProof = async () => {
+    if (!proofModal.stage) return;
+    if (!proofForm.billDescription.trim()) {
+      alert("Please enter a short bill/invoice description.");
+      return;
+    }
+    setProofLoading(true);
     try {
       const api = (await import("../utils/api")).default;
-      await api.post(`/api/milestones/${id}/submit`, { stage, billDescription: billDesc, proofData: billDesc });
+      let proofHash = proofForm.fileHash;
+      if (proofForm.file && !proofHash) {
+        proofHash = await computeFileHash(proofForm.file);
+      }
+      await api.post(`/api/milestones/${id}/submit`, {
+        stage: proofModal.stage,
+        billDescription: proofForm.billDescription,
+        proofHash: proofHash || undefined,
+      });
+      setProofModal({ open: false, stage: null });
       alert("Proof submitted! Awaiting verification.");
       window.location.reload();
-    } catch (err) { alert(err.response?.data?.message || err.message); }
+    } catch (err) {
+      alert(err.message || "Failed to submit proof");
+    } finally {
+      setProofLoading(false);
+    }
   };
 
   const handleRepay = useCallback(async (installment, amountWei) => {
@@ -1602,7 +1668,7 @@ export function LoanDetail() {
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <StatusBadge status={m.status} />
                   {user?.role === "borrower" && m.status === "PENDING" && i > 0 && loan.status === "ACTIVE" && (
-                    <button onClick={() => handleSubmitProof(m.stage)} style={s.smallBtn}>Submit Proof</button>
+                    <button onClick={() => openProofModal(m.stage)} style={s.smallBtn}>+ Upload Bill</button>
                   )}
                   {user?.role === "lender" && m.status === "SUBMITTED" && loan.status === "ACTIVE" && (
                     <button onClick={async () => {
@@ -1622,6 +1688,79 @@ export function LoanDetail() {
             </div>
           ))}
         </div>
+
+        {proofModal.open && (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000,
+          }}>
+            <div style={{ ...s.card, maxWidth: 520, margin: 0 }}>
+              <h3 style={{ ...s.title, fontSize: 18 }}>Upload Bill Proof — Stage {proofModal.stage}</h3>
+              <p style={{ ...s.subtitle, marginBottom: 16 }}>
+                Pick a file (optional) and add a short description. We’ll store a SHA-256 hash as proof.
+              </p>
+
+              <div style={s.form}>
+                <div style={s.field}>
+                  <label style={s.label}>Bill / Invoice Description</label>
+                  <textarea
+                    style={{ ...s.input, height: 80, resize: "vertical" }}
+                    placeholder="e.g. Invoice #123 for equipment purchase"
+                    value={proofForm.billDescription}
+                    onChange={(e) => setProofForm((p) => ({ ...p, billDescription: e.target.value }))}
+                  />
+                </div>
+                <div style={s.field}>
+                  <label style={s.label}>Select File (optional)</label>
+                  <input
+                    type="file"
+                    style={s.input}
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0] || null;
+                      setProofForm((p) => ({ ...p, file, fileHash: "" }));
+                      if (file) {
+                        try {
+                          const h = await computeFileHash(file);
+                          setProofForm((p) => ({ ...p, fileHash: h }));
+                        } catch {}
+                      }
+                    }}
+                  />
+                  {proofForm.file && (
+                    <div style={{ ...s.infoBox, marginTop: 8 }}>
+                      <div><span style={{ color: "#4a7090" }}>File:</span> <span style={{ color: "#c8e0f4" }}>{proofForm.file.name}</span></div>
+                      {proofForm.fileHash && (
+                        <div style={{ marginTop: 6 }}>
+                          <div style={{ color: "#4a7090", fontSize: 11, fontFamily: "monospace" }}>SHA-256</div>
+                          <div style={{ color: "#00d4ff", fontSize: 11, fontFamily: "monospace", wordBreak: "break-all" }}>{proofForm.fileHash}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setProofModal({ open: false, stage: null })}
+                    style={s.btnOutline}
+                    disabled={proofLoading}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitProof}
+                    style={s.btn}
+                    disabled={proofLoading}
+                  >
+                    {proofLoading ? "Submitting..." : "Submit Proof"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {user?.role === "borrower" && loan.status === "APPROVED" && (
           <div style={{ ...s.warning, marginTop: 16 }}>
             ⚠ Your loan is approved, but repayments start only after the lender deposits funds (loan becomes ACTIVE).
