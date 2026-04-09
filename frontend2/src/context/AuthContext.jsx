@@ -25,10 +25,7 @@ export function AuthProvider({ children }) {
   const login = async (formData) => {
     const res = await api.post("/api/auth/login", formData);
     localStorage.setItem("token", res.data.token);
-    setUser({
-      ...res.data.user,
-      kyc_status: res.data.user.kycStatus || res.data.user.kyc_status || "rejected",
-    });
+    setUser(res.data.user);
     return res.data;
   };
 
@@ -36,10 +33,8 @@ export function AuthProvider({ children }) {
   const register = async (formData) => {
     const res = await api.post("/api/auth/register", formData);
     localStorage.setItem("token", res.data.token);
-    setUser({
-      ...res.data.user,
-      kyc_status: res.data.user.kycStatus || res.data.user.kyc_status || "rejected",
-    });
+    // backend now returns user consistently
+    if (res.data.user) setUser(res.data.user);
     return res.data;
   };
 

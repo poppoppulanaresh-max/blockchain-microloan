@@ -28,35 +28,41 @@ if (PRIVATE_KEY) {
   PRIVATE_KEY = PRIVATE_KEY.trim();
 }
 
-if (!PRIVATE_KEY) {
-  throw new Error("❌ ADMIN_PRIVATE_KEY not found in .env");
-}
-
-if (!PRIVATE_KEY.startsWith("0x")) {
-  throw new Error("❌ Private key must start with 0x");
-}
-
-if (PRIVATE_KEY.length !== 66) {
-  throw new Error(
-    `❌ Invalid private key length: ${PRIVATE_KEY.length} (expected 66)`
-  );
-}
-
-// Connect to Ethereum node
 const web3 = new Web3(RPC_URL);
 
-// Admin account (backend signer)
-const adminAccount = web3.eth.accounts.privateKeyToAccount(PRIVATE_KEY);
-web3.eth.accounts.wallet.add(adminAccount);
+let blockchainEnabled = true;
+let adminAccount = null;
+let kycContract = null;
+let loanContract = null;
 
-console.log("✅ Admin wallet loaded:", adminAccount.address);
+function disableBlockchain(reason) {
+  blockchainEnabled = false;
+  console.warn(`⚠ Blockchain disabled: ${reason}`);
+}
 
-// Contract instances
-const kycContract = new web3.eth.Contract(kycABI, addresses.KYCRegistry);
-const loanContract = new web3.eth.Contract(loanABI, addresses.MicroLoanContract);
+if (!PRIVATE_KEY) {
+  disableBlockchain("ADMIN_PRIVATE_KEY not set");
+} else if (!PRIVATE_KEY.startsWith("0x")) {
+  disableBlockchain("ADMIN_PRIVATE_KEY must start with 0x");
+} else if (PRIVATE_KEY.length !== 66) {
+  disableBlockchain(`Invalid ADMIN_PRIVATE_KEY length: ${PRIVATE_KEY.length} (expected 66)`);
+} else {
+  try {
+    adminAccount = web3.eth.accounts.privateKeyToAccount(PRIVATE_KEY);
+    web3.eth.accounts.wallet.add(adminAccount);
+    console.log("✅ Admin wallet loaded:", adminAccount.address);
+    kycContract = new web3.eth.Contract(kycABI, addresses.KYCRegistry);
+    loanContract = new web3.eth.Contract(loanABI, addresses.MicroLoanContract);
+  } catch (e) {
+    disableBlockchain(e?.message || "Failed to init web3 signer");
+  }
+}
 
 // Helper: sign & send transaction
 async function sendTx(contractMethod) {
+  if (!blockchainEnabled || !adminAccount) {
+    throw new Error("Blockchain signer not configured");
+  }
   const gas = await contractMethod.estimateGas({
     from: adminAccount.address,
   });
@@ -69,24 +75,29 @@ async function sendTx(contractMethod) {
 
 // KYC Functions
 async function storeKYCOnChain(userWallet, dataHash, role) {
+  if (!kycContract) throw new Error("KYC contract not configured");
   return sendTx(kycContract.methods.submitKYC(userWallet, dataHash, role));
 }
 
 async function verifyKYCOnChain(userWallet, status) {
+  if (!kycContract) throw new Error("KYC contract not configured");
   return sendTx(kycContract.methods.verifyKYC(userWallet, status));
 }
 
 async function isKYCVerified(userWallet) {
+  if (!kycContract) throw new Error("KYC contract not configured");
   return kycContract.methods.isVerified(userWallet).call();
 }
 
 // Credit Score
 async function setCreditScoreOnChain(loanIdHash, score) {
+  if (!loanContract) throw new Error("Loan contract not configured");
   return sendTx(loanContract.methods.setCreditScore(loanIdHash, score));
 }
 
 // Loan Status
 async function getLoanStatusFromChain(loanIdHash) {
+  if (!loanContract) throw new Error("Loan contract not configured");
   const status = await loanContract.methods.getLoanStatus(loanIdHash).call();
 
   const STATUS_MAP = [
@@ -102,11 +113,13 @@ async function getLoanStatusFromChain(loanIdHash) {
 }
 
 async function markDefaultedOnChain(loanIdHash) {
+  if (!loanContract) throw new Error("Loan contract not configured");
   return sendTx(loanContract.methods.markDefaulted(loanIdHash));
 }
 
 // Milestone Release
 async function verifyAndReleaseMilestone(loanIdHash, milestoneIndex) {
+  if (!loanContract) throw new Error("Loan contract not configured");
   return sendTx(
     loanContract.methods.verifyAndReleaseMilestone(loanIdHash, milestoneIndex)
   );
@@ -114,6 +127,10 @@ async function verifyAndReleaseMilestone(loanIdHash, milestoneIndex) {
 
 // Event Listeners
 function listenToEvents(handlers = {}) {
+  if (!loanContract) {
+    console.warn("⚠ listenToEvents skipped (loanContract not configured)");
+    return;
+  }
   loanContract.events.LoanCreated({}, (err, event) => {
     if (!err && handlers.LoanCreated) handlers.LoanCreated(event.returnValues);
   });

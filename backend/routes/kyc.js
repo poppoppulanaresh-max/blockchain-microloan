@@ -148,11 +148,35 @@ router.get("/status", protect, async (req, res) => {
   }
 });
 
+// PENDING LIST (for auditor/admin/government dashboards)
+router.get("/pending", protect, authorize("admin", "auditor", "government"), async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT
+         u.id, u.wallet_address, u.name, u.email, u.role, u.kyc_status,
+         d.business_name, d.gst_number, d.aadhaar_number, d.pan_number,
+         d.business_type, d.annual_turnover, d.doc_hash, d.submitted_at, d.verified_at
+       FROM users u
+       JOIN kyc_documents d ON d.user_id = u.id
+       WHERE u.kyc_status = 'pending'
+       ORDER BY d.submitted_at DESC NULLS LAST`
+    );
+    res.json({ success: true, pending: result.rows });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // VERIFY
-router.post("/verify/:userId", protect, authorize("admin"), async (req, res) => {
+router.post("/verify/:userId", protect, authorize("admin", "auditor", "government"), async (req, res) => {
   try {
     const { status } = req.body;
     const { userId } = req.params;
+
+    if (!["verified", "rejected", "pending"].includes(String(status || ""))) {
+      return res.status(400).json({ success: false, message: "Invalid status" });
+    }
 
     const pool = getPool();
 
@@ -170,6 +194,19 @@ router.post("/verify/:userId", protect, authorize("admin"), async (req, res) => 
     try {
       const tx = await verifyKYCOnChain(req.user.wallet_address, status === "verified");
       txHash = tx?.hash;
+    } catch {}
+
+    try {
+      await pool.query(
+        `INSERT INTO audit_logs (actor_wallet, action, details, tx_hash)
+         VALUES ($1,$2,$3,$4)`,
+        [
+          req.user.wallet_address,
+          status === "verified" ? "KYC_VERIFIED" : "KYC_REJECTED",
+          JSON.stringify({ userId, status }),
+          txHash,
+        ]
+      );
     } catch {}
 
     res.json({ success: true, txHash });

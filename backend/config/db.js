@@ -81,6 +81,8 @@ async function initSchema() {
         pct INTEGER,
         status TEXT DEFAULT 'PENDING',
         proof_hash TEXT,
+        bill_description TEXT,
+        tx_hash TEXT,
         released_at TIMESTAMP
       )
     `);
@@ -89,6 +91,10 @@ async function initSchema() {
       CREATE TABLE IF NOT EXISTS repayments (
         id SERIAL PRIMARY KEY,
         loan_id INTEGER REFERENCES loans(id),
+        installment_no INTEGER,
+        due_date TIMESTAMP,
+        emi_amount_wei TEXT,
+        paid BOOLEAN DEFAULT FALSE,
         amount_wei TEXT,
         tx_hash TEXT,
         paid_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -108,6 +114,20 @@ async function initSchema() {
     `);
 
     console.log("✅ Tables created");
+
+    // --- lightweight migrations for existing databases ---
+    // loans
+    await pool.query(`ALTER TABLE loans ADD COLUMN IF NOT EXISTS funded_at TIMESTAMP`);
+
+    // milestones
+    await pool.query(`ALTER TABLE milestones ADD COLUMN IF NOT EXISTS bill_description TEXT`);
+    await pool.query(`ALTER TABLE milestones ADD COLUMN IF NOT EXISTS tx_hash TEXT`);
+
+    // repayments
+    await pool.query(`ALTER TABLE repayments ADD COLUMN IF NOT EXISTS installment_no INTEGER`);
+    await pool.query(`ALTER TABLE repayments ADD COLUMN IF NOT EXISTS due_date TIMESTAMP`);
+    await pool.query(`ALTER TABLE repayments ADD COLUMN IF NOT EXISTS emi_amount_wei TEXT`);
+    await pool.query(`ALTER TABLE repayments ADD COLUMN IF NOT EXISTS paid BOOLEAN DEFAULT FALSE`);
   } catch (err) {
     console.error("❌ Schema error:", err);
   }

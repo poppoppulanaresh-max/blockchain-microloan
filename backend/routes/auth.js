@@ -2,6 +2,7 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { getPool } from "../config/db.js";
+import { protect } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -10,6 +11,20 @@ const signToken = (id, role) =>
   jwt.sign({ id, role }, process.env.JWT_SECRET, {
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   });
+
+function sanitizeUser(row) {
+  if (!row) return null;
+  // Explicitly pick fields to avoid leaking password_hash or other columns.
+  return {
+    id: row.id,
+    wallet_address: row.wallet_address,
+    name: row.name,
+    email: row.email,
+    role: row.role,
+    kyc_status: row.kyc_status,
+    created_at: row.created_at,
+  };
+}
 
 /* =========================
    REGISTER
@@ -59,11 +74,17 @@ router.post("/register", async (req, res) => {
     // Generate token
     const token = signToken(user.id, user.role);
 
+    const userRes = await pool.query(
+      "SELECT id, wallet_address, name, email, role, kyc_status, created_at FROM users WHERE id=$1",
+      [user.id]
+    );
+
     res.status(201).json({
       success: true,
       message: "User registered successfully",
       token,
       userId: user.id,
+      user: sanitizeUser(userRes.rows[0]),
     });
 
   } catch (err) {
@@ -95,7 +116,7 @@ router.post("/login", async (req, res) => {
     const pool = getPool();
 
     const result = await pool.query(
-      "SELECT * FROM users WHERE email=$1",
+      "SELECT id, wallet_address, name, email, password_hash, role, kyc_status, created_at FROM users WHERE email=$1",
       [email]
     );
 
@@ -123,7 +144,7 @@ router.post("/login", async (req, res) => {
       success: true,
       message: "Login successful",
       token,
-      user,
+      user: sanitizeUser(user),
     });
 
   } catch (err) {
@@ -134,6 +155,14 @@ router.post("/login", async (req, res) => {
       message: err.message || "Server error",
     });
   }
+});
+
+/* =========================
+   CURRENT USER (ME)
+========================= */
+router.get("/me", protect, async (req, res) => {
+  // protect already loads a safe subset of fields into req.user
+  res.json({ success: true, user: sanitizeUser(req.user) });
 });
 
 export default router;

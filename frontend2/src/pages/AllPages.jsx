@@ -360,7 +360,8 @@ export function Login() {
       await login(form);
       navigate("/dashboard");
     } catch (err) {
-      setError(err.response?.data?.message || "Invalid credentials");
+      // api interceptor throws Error(message), so err.response is usually undefined
+      setError(err.message || "Invalid credentials");
     } finally {
       setLoading(false);
     }
