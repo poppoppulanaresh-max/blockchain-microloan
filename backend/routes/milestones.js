@@ -1,7 +1,9 @@
-const router = require("express").Router();
-const crypto = require("crypto");
-const { getPool } = require("../config/db");
-const { protect, authorize } = require("../middleware/auth");
+import { Router } from "express";
+import crypto from "crypto";
+import { getPool } from "../config/db.js";
+import { protect, authorize } from "../middleware/auth.js";
+
+const router = Router();
 
 router.post("/:loanId/submit", protect, authorize("borrower"), async (req, res) => {
   try {
@@ -16,7 +18,6 @@ router.post("/:loanId/submit", protect, authorize("borrower"), async (req, res) 
     );
 
     res.json({ success: true });
-
   } catch {
     res.status(500).json({ success: false });
   }
@@ -32,10 +33,9 @@ router.get("/:loanId", async (req, res) => {
     );
 
     res.json({ success: true, milestones: result.rows });
-
   } catch {
     res.status(500).json({ success: false });
   }
 });
 
-module.exports = router;
+export default router;
