@@ -1,16 +1,18 @@
-const express = require("express");
-const cors = require("cors");
-const morgan = require("morgan");
-const helmet = require("helmet");
-require("dotenv").config();
+import express from "express";
+import cors from "cors";
+import morgan from "morgan";
+import helmet from "helmet";
+import dotenv from "dotenv";
+dotenv.config();
 
-const authRoutes = require("./routes/auth");
-const kycRoutes = require("./routes/kyc");
-const loanRoutes = require("./routes/loans");
-const milestoneRoutes = require("./routes/milestones");
-const repayRoutes = require("./routes/repayments");
-const adminRoutes = require("./routes/admin");
-const { connectDB } = require("./config/db");
+import authRoutes from "./routes/auth.js";
+import kycRoutes from "./routes/kyc.js";
+import loanRoutes from "./routes/loans.js";
+import milestoneRoutes from "./routes/milestones.js";
+import repayRoutes from "./routes/repayments.js";
+import adminRoutes from "./routes/admin.js";
+
+import { connectDB } from "./config/db.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -24,7 +26,6 @@ app.use(
         "http://localhost:3000",
         process.env.FRONTEND_URL,
       ];
-      // Allow Vercel preview URLs and no-origin requests (Postman, mobile)
       if (!origin || allowed.includes(origin) || /\.vercel\.app$/.test(origin)) {
         callback(null, true);
       } else {
@@ -67,4 +68,4 @@ connectDB().then(() => {
   });
 });
 
-module.exports = app;
+export default app;
