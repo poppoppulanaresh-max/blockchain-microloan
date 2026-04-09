@@ -1,13 +1,12 @@
-// backend/config/blockchain.js
+import { Web3 } from "web3";
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const { Web3 } = require("web3");
-const fs = require("fs");
-const path = require("path");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-
-// ─────────────────────────────────────────────────────────
 // Load deployed contract addresses + ABIs
-// ─────────────────────────────────────────────────────────
 const addresses = JSON.parse(
   fs.readFileSync(path.join(__dirname, "contractAddresses.json"))
 );
@@ -20,21 +19,15 @@ const loanABI = JSON.parse(
   fs.readFileSync(path.join(__dirname, "abis/MicroLoanContract.json"))
 );
 
-
-// ─────────────────────────────────────────────────────────
-// ENVIRONMENT VARIABLES (SAFE LOADING)
-// ─────────────────────────────────────────────────────────
-const RPC_URL =
-  process.env.ETHEREUM_RPC_URL || "http://127.0.0.1:8545";
+// Environment Variables
+const RPC_URL = process.env.ETHEREUM_RPC_URL || "http://127.0.0.1:8545";
 
 let PRIVATE_KEY = process.env.ADMIN_PRIVATE_KEY;
 
-// Remove hidden spaces / newline (Windows PowerShell fix)
 if (PRIVATE_KEY) {
   PRIVATE_KEY = PRIVATE_KEY.trim();
 }
 
-// Validate private key
 if (!PRIVATE_KEY) {
   throw new Error("❌ ADMIN_PRIVATE_KEY not found in .env");
 }
@@ -49,88 +42,52 @@ if (PRIVATE_KEY.length !== 66) {
   );
 }
 
-
-// ─────────────────────────────────────────────────────────
 // Connect to Ethereum node
-// ─────────────────────────────────────────────────────────
 const web3 = new Web3(RPC_URL);
 
-
-// ─────────────────────────────────────────────────────────
 // Admin account (backend signer)
-// ─────────────────────────────────────────────────────────
 const adminAccount = web3.eth.accounts.privateKeyToAccount(PRIVATE_KEY);
 web3.eth.accounts.wallet.add(adminAccount);
 
 console.log("✅ Admin wallet loaded:", adminAccount.address);
 
-
-// ─────────────────────────────────────────────────────────
 // Contract instances
-// ─────────────────────────────────────────────────────────
-const kycContract = new web3.eth.Contract(
-  kycABI,
-  addresses.KYCRegistry
-);
+const kycContract = new web3.eth.Contract(kycABI, addresses.KYCRegistry);
+const loanContract = new web3.eth.Contract(loanABI, addresses.MicroLoanContract);
 
-const loanContract = new web3.eth.Contract(
-  loanABI,
-  addresses.MicroLoanContract
-);
-
-
-// ─────────────────────────────────────────────────────────
 // Helper: sign & send transaction
-// ─────────────────────────────────────────────────────────
 async function sendTx(contractMethod) {
   const gas = await contractMethod.estimateGas({
-    from: adminAccount.address
+    from: adminAccount.address,
   });
 
   return contractMethod.send({
     from: adminAccount.address,
-    gas: Math.ceil(Number(gas) * 1.2)
+    gas: Math.ceil(Number(gas) * 1.2),
   });
 }
 
-
-// ─────────────────────────────────────────────────────────
-// KYC FUNCTIONS
-// ─────────────────────────────────────────────────────────
+// KYC Functions
 async function storeKYCOnChain(userWallet, dataHash, role) {
-  return sendTx(
-    kycContract.methods.submitKYC(userWallet, dataHash, role)
-  );
+  return sendTx(kycContract.methods.submitKYC(userWallet, dataHash, role));
 }
 
 async function verifyKYCOnChain(userWallet, status) {
-  return sendTx(
-    kycContract.methods.verifyKYC(userWallet, status)
-  );
+  return sendTx(kycContract.methods.verifyKYC(userWallet, status));
 }
 
 async function isKYCVerified(userWallet) {
   return kycContract.methods.isVerified(userWallet).call();
 }
 
-
-// ─────────────────────────────────────────────────────────
-// CREDIT SCORE
-// ─────────────────────────────────────────────────────────
+// Credit Score
 async function setCreditScoreOnChain(loanIdHash, score) {
-  return sendTx(
-    loanContract.methods.setCreditScore(loanIdHash, score)
-  );
+  return sendTx(loanContract.methods.setCreditScore(loanIdHash, score));
 }
 
-
-// ─────────────────────────────────────────────────────────
-// LOAN STATUS
-// ─────────────────────────────────────────────────────────
+// Loan Status
 async function getLoanStatusFromChain(loanIdHash) {
-  const status = await loanContract.methods
-    .getLoanStatus(loanIdHash)
-    .call();
+  const status = await loanContract.methods.getLoanStatus(loanIdHash).call();
 
   const STATUS_MAP = [
     "PENDING",
@@ -138,81 +95,55 @@ async function getLoanStatusFromChain(loanIdHash) {
     "REJECTED",
     "ACTIVE",
     "COMPLETED",
-    "DEFAULTED"
+    "DEFAULTED",
   ];
 
   return STATUS_MAP[Number(status)];
 }
 
 async function markDefaultedOnChain(loanIdHash) {
+  return sendTx(loanContract.methods.markDefaulted(loanIdHash));
+}
+
+// Milestone Release
+async function verifyAndReleaseMilestone(loanIdHash, milestoneIndex) {
   return sendTx(
-    loanContract.methods.markDefaulted(loanIdHash)
+    loanContract.methods.verifyAndReleaseMilestone(loanIdHash, milestoneIndex)
   );
 }
 
-
-// ─────────────────────────────────────────────────────────
-// MILESTONE RELEASE
-// ─────────────────────────────────────────────────────────
-async function verifyAndReleaseMilestone(
-  loanIdHash,
-  milestoneIndex
-) {
-  return sendTx(
-    loanContract.methods.verifyAndReleaseMilestone(
-      loanIdHash,
-      milestoneIndex
-    )
-  );
-}
-
-
-// ─────────────────────────────────────────────────────────
-// EVENT LISTENERS
-// ─────────────────────────────────────────────────────────
+// Event Listeners
 function listenToEvents(handlers = {}) {
-
   loanContract.events.LoanCreated({}, (err, event) => {
-    if (!err && handlers.LoanCreated)
-      handlers.LoanCreated(event.returnValues);
+    if (!err && handlers.LoanCreated) handlers.LoanCreated(event.returnValues);
   });
 
   loanContract.events.LoanApproved({}, (err, event) => {
-    if (!err && handlers.LoanApproved)
-      handlers.LoanApproved(event.returnValues);
+    if (!err && handlers.LoanApproved) handlers.LoanApproved(event.returnValues);
   });
 
   loanContract.events.LoanRejected({}, (err, event) => {
-    if (!err && handlers.LoanRejected)
-      handlers.LoanRejected(event.returnValues);
+    if (!err && handlers.LoanRejected) handlers.LoanRejected(event.returnValues);
   });
 
   loanContract.events.MilestoneReleased({}, (err, event) => {
-    if (!err && handlers.MilestoneReleased)
-      handlers.MilestoneReleased(event.returnValues);
+    if (!err && handlers.MilestoneReleased) handlers.MilestoneReleased(event.returnValues);
   });
 
   loanContract.events.RepaymentMade({}, (err, event) => {
-    if (!err && handlers.RepaymentMade)
-      handlers.RepaymentMade(event.returnValues);
+    if (!err && handlers.RepaymentMade) handlers.RepaymentMade(event.returnValues);
   });
 
   loanContract.events.LoanCompleted({}, (err, event) => {
-    if (!err && handlers.LoanCompleted)
-      handlers.LoanCompleted(event.returnValues);
+    if (!err && handlers.LoanCompleted) handlers.LoanCompleted(event.returnValues);
   });
 
   loanContract.events.LoanDefaulted({}, (err, event) => {
-    if (!err && handlers.LoanDefaulted)
-      handlers.LoanDefaulted(event.returnValues);
+    if (!err && handlers.LoanDefaulted) handlers.LoanDefaulted(event.returnValues);
   });
 }
 
-
-// ─────────────────────────────────────────────────────────
-// EXPORTS
-// ─────────────────────────────────────────────────────────
-module.exports = {
+export {
   web3,
   kycContract,
   loanContract,
@@ -224,5 +155,5 @@ module.exports = {
   getLoanStatusFromChain,
   markDefaultedOnChain,
   verifyAndReleaseMilestone,
-  listenToEvents
+  listenToEvents,
 };
