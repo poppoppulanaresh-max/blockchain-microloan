@@ -248,19 +248,40 @@ export function Register() {
   const handleConnect = async () => { await connectWallet(); };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!connected || !account) return setError("Please connect your MetaMask wallet first");
-    setLoading(true);
-    setError("");
-    try {
-      await register({ ...form, walletAddress: account });
+  e.preventDefault();
+
+  if (!connected || !account) {
+    setError("Please connect your MetaMask wallet first");
+    return;
+  }
+
+  if (loading) return; // 🚫 prevent double submit
+
+  setLoading(true);
+  setError("");
+
+  try {
+    const res = await register({
+      ...form,
+      walletAddress: account,
+    });
+
+    console.log("Register response:", res); // debug
+
+    // ✅ check backend success properly
+    if (res?.success) {
       navigate("/kyc");
-    } catch (err) {
-      setError(err.response?.data?.message || "Registration failed");
-    } finally {
-      setLoading(false);
+    } else {
+      setError(res?.message || "Registration failed");
     }
-  };
+
+  } catch (err) {
+    // ✅ clean error (works with interceptor)
+    setError(err.message || "Registration failed");
+  }
+
+  setLoading(false);
+};
 
   const f = (k, v) => setForm((p) => ({ ...p, [k]: v }));
   const s = styles;
